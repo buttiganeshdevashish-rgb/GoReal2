@@ -195,7 +195,7 @@ function isConnectionError(err: any): boolean {
 
 function getSqliteDbWrapper(): DbWrapper {
   let dbPath: string;
-  if (process.env.VERCEL || process.env.NODE_ENV === "production") {
+  if (process.env.VERCEL) {
     dbPath = "/tmp/goalreal.db";
   } else {
     const dataDir = path.join(process.cwd(), "data");
@@ -286,6 +286,49 @@ function getSqliteDbWrapper(): DbWrapper {
   return sqliteDbWrapper;
 }
 
+function isTableMissingError(err: any): boolean {
+  if (!err) return false;
+  const msg = String(err.message || err).toLowerCase();
+  const code = String(err.code || "").toLowerCase();
+  return (
+    code === "42p01" ||
+    msg.includes("does not exist") ||
+    msg.includes("relation")
+  );
+}
+
+async function executePgUnsafe(sqlString: string, args: any[], appendReturning: boolean = false): Promise<any[]> {
+  let translated = translateSql(sqlString);
+  if (appendReturning) {
+    const upper = translated.toUpperCase().trim();
+    if (upper.startsWith("INSERT INTO") && !upper.includes("RETURNING")) {
+      translated = translated + " RETURNING id";
+    }
+  }
+
+  let values: any[] = [];
+  if (
+    args.length === 1 &&
+    typeof args[0] === "object" &&
+    args[0] !== null &&
+    !Array.isArray(args[0]) &&
+    sqlString.includes("@")
+  ) {
+    const extracted = extractNamedParams(translated, args[0]);
+    translated = extracted.sql;
+    values = extracted.values;
+  } else {
+    const flatArgs = args.length === 1 && Array.isArray(args[0]) ? args[0] : args;
+    values = flatArgs;
+    let paramCount = 1;
+    while (translated.includes("?")) {
+      translated = translated.replace("?", `$${paramCount++}`);
+    }
+  }
+
+  return await _pgSql.unsafe(translated, values);
+}
+
 export function getDb(): DbWrapper {
   if (_db) return _db;
 
@@ -305,31 +348,19 @@ export function getDb(): DbWrapper {
         return {
           async all(...args: any[]) {
             try {
-              let translated = translateSql(sqlString);
-              let values: any[] = [];
-
-              if (
-                args.length === 1 &&
-                typeof args[0] === "object" &&
-                args[0] !== null &&
-                !Array.isArray(args[0]) &&
-                sqlString.includes("@")
-              ) {
-                const extracted = extractNamedParams(translated, args[0]);
-                translated = extracted.sql;
-                values = extracted.values;
-              } else {
-                const flatArgs = args.length === 1 && Array.isArray(args[0]) ? args[0] : args;
-                values = flatArgs;
-                let paramCount = 1;
-                while (translated.includes("?")) {
-                  translated = translated.replace("?", `$${paramCount++}`);
-                }
-              }
-
-              const rows = await _pgSql.unsafe(translated, values);
+              const rows = await executePgUnsafe(sqlString, args);
               return Array.from(rows);
             } catch (err: any) {
+              if (isTableMissingError(err)) {
+                console.log("Postgres relation missing, executing SCHEMA...");
+                try {
+                  await pgDb.exec(SCHEMA);
+                  const rows = await executePgUnsafe(sqlString, args);
+                  return Array.from(rows);
+                } catch (schemaErr) {
+                  console.error("Failed to recreate schema on Postgres:", schemaErr);
+                }
+              }
               if (isConnectionError(err)) {
                 console.warn("Postgres connection failed, falling back to SQLite:", err);
                 const localDb = getSqliteDbWrapper();
@@ -355,37 +386,21 @@ export function getDb(): DbWrapper {
           },
           async run(...args: any[]) {
             try {
-              let translated = translateSql(sqlString);
-
-              const upper = translated.toUpperCase().trim();
-              if (upper.startsWith("INSERT INTO") && !upper.includes("RETURNING")) {
-                translated = translated + " RETURNING id";
-              }
-
-              let values: any[] = [];
-              if (
-                args.length === 1 &&
-                typeof args[0] === "object" &&
-                args[0] !== null &&
-                !Array.isArray(args[0]) &&
-                sqlString.includes("@")
-              ) {
-                const extracted = extractNamedParams(translated, args[0]);
-                translated = extracted.sql;
-                values = extracted.values;
-              } else {
-                const flatArgs = args.length === 1 && Array.isArray(args[0]) ? args[0] : args;
-                values = flatArgs;
-                let paramCount = 1;
-                while (translated.includes("?")) {
-                  translated = translated.replace("?", `$${paramCount++}`);
-                }
-              }
-
-              const rows = await _pgSql.unsafe(translated, values);
+              const rows = await executePgUnsafe(sqlString, args, true);
               const lastInsertRowid = rows[0]?.id || rows[0]?.lastInsertRowid || 0;
               return { lastInsertRowid: Number(lastInsertRowid), changes: rows.length };
             } catch (err: any) {
+              if (isTableMissingError(err)) {
+                console.log("Postgres relation missing, executing SCHEMA...");
+                try {
+                  await pgDb.exec(SCHEMA);
+                  const rows = await executePgUnsafe(sqlString, args, true);
+                  const lastInsertRowid = rows[0]?.id || rows[0]?.lastInsertRowid || 0;
+                  return { lastInsertRowid: Number(lastInsertRowid), changes: rows.length };
+                } catch (schemaErr) {
+                  console.error("Failed to recreate schema on Postgres:", schemaErr);
+                }
+              }
               if (isConnectionError(err)) {
                 console.warn("Postgres connection failed, falling back to SQLite:", err);
                 const localDb = getSqliteDbWrapper();
