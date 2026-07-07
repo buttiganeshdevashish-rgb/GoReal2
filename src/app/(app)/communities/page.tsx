@@ -6,9 +6,9 @@ import CreateCommunity from "@/components/CreateCommunity";
 
 export const dynamic = "force-dynamic";
 
-export default function CommunitiesPage() {
-  const user = getCurrentUser()!;
-  const communities = getCommunities(user.id);
+export default async function CommunitiesPage() {
+  const user = (await getCurrentUser())!;
+  const communities = await getCommunities(user.id);
 
   return (
     <div className="space-y-6">

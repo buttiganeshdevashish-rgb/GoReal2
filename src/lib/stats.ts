@@ -1,13 +1,14 @@
 import { getDb, todayStr, daysAgo } from "./db";
 import type { Streaks, HeatmapDay, LeaderboardRow, User } from "./types";
 
-export function getUserDates(userId: number): string[] {
+export async function getUserDates(userId: number): Promise<string[]> {
   const db = getDb();
-  return (db.prepare("SELECT post_date FROM posts WHERE user_id = ? ORDER BY post_date DESC").all(userId) as { post_date: string }[]).map((r) => r.post_date);
+  const rows = (await db.prepare("SELECT post_date FROM posts WHERE user_id = ? ORDER BY post_date DESC").all(userId)) as { post_date: string }[];
+  return rows.map((r) => r.post_date);
 }
 
-export function computeStreaks(userId: number): Streaks {
-  const dates = getUserDates(userId);
+export async function computeStreaks(userId: number): Promise<Streaks> {
+  const dates = await getUserDates(userId);
   const set = new Set(dates);
   const today = todayStr();
 
@@ -50,11 +51,11 @@ function nextDay(dateStr: string): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-export function getHeatmap(userId: number, days = 119): HeatmapDay[] {
+export async function getHeatmap(userId: number, days = 119): Promise<HeatmapDay[]> {
   const db = getDb();
-  const rows = db
+  const rows = (await db
     .prepare("SELECT post_date AS date, COUNT(*) AS count FROM posts WHERE user_id = ? AND post_date >= ? GROUP BY post_date")
-    .all(userId, daysAgo(days)) as HeatmapDay[];
+    .all(userId, daysAgo(days))) as HeatmapDay[];
   const map = new Map(rows.map((r) => [r.date, r.count]));
   const out: HeatmapDay[] = [];
   for (let i = days; i >= 0; i--) {
@@ -64,58 +65,63 @@ export function getHeatmap(userId: number, days = 119): HeatmapDay[] {
   return out;
 }
 
-export function getCommunityLeaderboard(communityId: number): LeaderboardRow[] {
+export async function getCommunityLeaderboard(communityId: number): Promise<LeaderboardRow[]> {
   const db = getDb();
-  const members = db
+  const members = (await db
     .prepare(
       `SELECT u.* FROM users u JOIN memberships m ON m.user_id = u.id
        WHERE m.community_id = ? AND m.status = 'active'`
     )
-    .all(communityId) as User[];
-  const rows = members.map((user) => {
-    const s = computeStreaks(user.id);
-    return {
-      user,
-      currentStreak: s.current,
-      consistency: s.consistency30,
-      totalPosts: s.totalPosts,
-      score: s.current * 3 + s.consistency30 + Math.min(s.totalPosts, 60),
-    };
-  });
+    .all(communityId)) as User[];
+  
+  const rows = await Promise.all(
+    members.map(async (user) => {
+      const s = await computeStreaks(user.id);
+      return {
+        user,
+        currentStreak: s.current,
+        consistency: s.consistency30,
+        totalPosts: s.totalPosts,
+        score: s.current * 3 + s.consistency30 + Math.min(s.totalPosts, 60),
+      };
+    })
+  );
   return rows.sort((a, b) => b.score - a.score);
 }
 
-export function getWeeklyActivity(userId: number): { day: string; posts: number; likes: number }[] {
+export async function getWeeklyActivity(userId: number): Promise<{ day: string; posts: number; likes: number }[]> {
   const db = getDb();
   const out: { day: string; posts: number; likes: number }[] = [];
   for (let i = 6; i >= 0; i--) {
     const date = daysAgo(i);
     const d = new Date(date + "T12:00:00");
-    const posts = (db.prepare("SELECT COUNT(*) c FROM posts WHERE user_id = ? AND post_date = ?").get(userId, date) as { c: number }).c;
-    const likes = (
-      db.prepare("SELECT COUNT(*) c FROM likes l JOIN posts p ON p.id = l.post_id WHERE p.user_id = ? AND l.created_at LIKE ?").get(userId, date + "%") as { c: number }
-    ).c;
-    out.push({ day: d.toLocaleDateString("en-US", { weekday: "short" }), posts, likes });
+    const postsRow = (await db.prepare("SELECT COUNT(*) c FROM posts WHERE user_id = ? AND post_date = ?").get(userId, date)) as { c: number };
+    const likesRow = (await db.prepare("SELECT COUNT(*) c FROM likes l JOIN posts p ON p.id = l.post_id WHERE p.user_id = ? AND CAST(l.created_at AS TEXT) LIKE ?").get(userId, date + "%")) as { c: number };
+    
+    out.push({
+      day: d.toLocaleDateString("en-US", { weekday: "short" }),
+      posts: postsRow ? postsRow.c : 0,
+      likes: likesRow ? likesRow.c : 0,
+    });
   }
   return out;
 }
 
-export function getMonthlyTrend(userId: number): { week: string; posts: number; consistency: number }[] {
+export async function getMonthlyTrend(userId: number): Promise<{ week: string; posts: number; consistency: number }[]> {
   const db = getDb();
   const out: { week: string; posts: number; consistency: number }[] = [];
   for (let w = 7; w >= 0; w--) {
     const start = daysAgo(w * 7 + 6);
     const end = daysAgo(w * 7);
-    const posts = (
-      db.prepare("SELECT COUNT(*) c FROM posts WHERE user_id = ? AND post_date >= ? AND post_date <= ?").get(userId, start, end) as { c: number }
-    ).c;
+    const postsRow = (await db.prepare("SELECT COUNT(*) c FROM posts WHERE user_id = ? AND post_date >= ? AND post_date <= ?").get(userId, start, end)) as { c: number };
+    const posts = postsRow ? postsRow.c : 0;
     out.push({ week: end.slice(5), posts, consistency: Math.round((posts / 7) * 100) });
   }
   return out;
 }
 
-export function getBadges(userId: number): { emoji: string; label: string; earned: boolean }[] {
-  const s = computeStreaks(userId);
+export async function getBadges(userId: number): Promise<{ emoji: string; label: string; earned: boolean }[]> {
+  const s = await computeStreaks(userId);
   return [
     { emoji: "🌱", label: "First Post", earned: s.totalPosts >= 1 },
     { emoji: "🔥", label: "7-Day Streak", earned: s.longest >= 7 },

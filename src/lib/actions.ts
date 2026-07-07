@@ -23,15 +23,15 @@ export async function signupAction(_prev: any, formData: FormData): Promise<{ er
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { error: "Please enter a valid email." };
 
   const db = getDb();
-  if (db.prepare("SELECT id FROM users WHERE email = ?").get(email)) return { error: "An account with this email already exists." };
+  if (await db.prepare("SELECT id FROM users WHERE email = ?").get(email)) return { error: "An account with this email already exists." };
 
   let username = email.split("@")[0].replace(/[^a-z0-9_.]/gi, "").toLowerCase() || "user";
   let suffix = 0;
-  while (db.prepare("SELECT id FROM users WHERE username = ?").get(suffix ? `${username}${suffix}` : username)) suffix++;
+  while (await db.prepare("SELECT id FROM users WHERE username = ?").get(suffix ? `${username}${suffix}` : username)) suffix++;
   if (suffix) username = `${username}${suffix}`;
 
   const hue = Math.floor(Math.random() * 360);
-  const info = db
+  const info = await db
     .prepare("INSERT INTO users (email, password_hash, name, username, avatar_hue, goal, goal_category, bio) VALUES (?,?,?,?,?,?,?,?)")
     .run(email, hashPassword(password), name, username, hue, goal || "Show up every day", category, "");
   setSessionCookie(Number(info.lastInsertRowid));
@@ -42,7 +42,7 @@ export async function loginAction(_prev: any, formData: FormData): Promise<{ err
   const email = String(formData.get("email") || "").trim().toLowerCase();
   const password = String(formData.get("password") || "");
   const db = getDb();
-  const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email) as User | undefined;
+  const user = (await db.prepare("SELECT * FROM users WHERE email = ?").get(email)) as User | undefined;
   if (!user || !verifyPassword(password, user.password_hash)) return { error: "Invalid email or password." };
   setSessionCookie(user.id);
   redirect("/home");
@@ -50,9 +50,9 @@ export async function loginAction(_prev: any, formData: FormData): Promise<{ err
 
 export async function demoLoginAction() {
   const db = getDb();
-  const user = db.prepare("SELECT * FROM users WHERE email = 'demo@goalreal.app'").get() as User;
+  const user = (await db.prepare("SELECT * FROM users WHERE email = 'demo@goalreal.app'").get()) as User;
   setSessionCookie(user.id);
-  redirect("/home");
+  return { success: true };
 }
 
 export async function logoutAction() {
@@ -63,7 +63,7 @@ export async function logoutAction() {
 // ---------- Posts ----------
 
 export async function createPostAction(_prev: any, formData: FormData): Promise<{ error?: string }> {
-  const user = getCurrentUser();
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
   const caption = String(formData.get("caption") || "").trim();
   const progress = String(formData.get("progress") || "").trim();
@@ -73,7 +73,7 @@ export async function createPostAction(_prev: any, formData: FormData): Promise<
   if (!caption) return { error: "Add a caption — what did you do today?" };
   const db = getDb();
   const today = todayStr();
-  const existing = db.prepare("SELECT id FROM posts WHERE user_id = ? AND post_date = ?").get(user!.id, today);
+  const existing = await db.prepare("SELECT id FROM posts WHERE user_id = ? AND post_date = ?").get(user.id, today);
   if (existing) return { error: "You've already posted your proof today. One real post per day — that's the deal. 🔒" };
 
   const mod = await moderateWithAI(caption + " " + progress);
@@ -86,28 +86,28 @@ export async function createPostAction(_prev: any, formData: FormData): Promise<
     try {
       const dir = path.join(process.cwd(), "public", "uploads");
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      const filename = `${user!.id}-${Date.now()}.${ext}`;
+      const filename = `${user.id}-${Date.now()}.${ext}`;
       fs.writeFileSync(path.join(dir, filename), Buffer.from(await image.arrayBuffer()));
       imageUrl = `/uploads/${filename}`;
     } catch (e) {
-      imageUrl = `/seed/${user!.goal_category.toLowerCase()}-${1 + (user!.id % 3)}.svg`;
+      imageUrl = `/seed/${user.goal_category.toLowerCase()}-${1 + (user.id % 3)}.svg`;
     }
   } else {
-    imageUrl = `/seed/${user!.goal_category.toLowerCase()}-${1 + (user!.id % 3)}.svg`;
+    imageUrl = `/seed/${user.goal_category.toLowerCase()}-${1 + (user.id % 3)}.svg`;
   }
 
-  const info = db
+  const info = await db
     .prepare("INSERT INTO posts (user_id, community_id, image_url, caption, progress_note, post_date, flagged, flag_reason) VALUES (?,?,?,?,?,?,?,?)")
-    .run(user!.id, communityId, imageUrl, caption, progress, today, mod.flagged ? 1 : 0, mod.reason);
+    .run(user.id, communityId, imageUrl, caption, progress, today, mod.flagged ? 1 : 0, mod.reason);
 
   // Milestone notifications to followers
   const { computeStreaks } = await import("./stats");
-  const s = computeStreaks(user!.id);
+  const s = await computeStreaks(user.id);
   if ([7, 14, 30, 50, 100].includes(s.current)) {
-    const followers = db.prepare("SELECT follower_id f FROM follows WHERE following_id = ?").all(user!.id) as { f: number }[];
+    const followers = (await db.prepare("SELECT follower_id f FROM follows WHERE following_id = ?").all(user.id)) as { f: number }[];
     const notif = db.prepare("INSERT INTO notifications (user_id, actor_id, type, post_id, body) VALUES (?,?,?,?,?)");
     for (const { f } of followers) {
-      notif.run(f, user!.id, "milestone", Number(info.lastInsertRowid), `${user!.name} just hit a ${s.current}-day streak! 🎉`);
+      await notif.run(f, user.id, "milestone", Number(info.lastInsertRowid), `${user.name} just hit a ${s.current}-day streak! 🎉`);
     }
   }
 
@@ -116,17 +116,17 @@ export async function createPostAction(_prev: any, formData: FormData): Promise<
 }
 
 export async function toggleLikeAction(postId: number) {
-  const user = getCurrentUser();
+  const user = await getCurrentUser();
   if (!user) return;
   const db = getDb();
-  const existing = db.prepare("SELECT id FROM likes WHERE post_id = ? AND user_id = ?").get(postId, user.id);
+  const existing = await db.prepare("SELECT id FROM likes WHERE post_id = ? AND user_id = ?").get(postId, user.id);
   if (existing) {
-    db.prepare("DELETE FROM likes WHERE post_id = ? AND user_id = ?").run(postId, user.id);
+    await db.prepare("DELETE FROM likes WHERE post_id = ? AND user_id = ?").run(postId, user.id);
   } else {
-    db.prepare("INSERT INTO likes (post_id, user_id) VALUES (?,?)").run(postId, user.id);
-    const post = db.prepare("SELECT user_id FROM posts WHERE id = ?").get(postId) as { user_id: number };
+    await db.prepare("INSERT INTO likes (post_id, user_id) VALUES (?,?)").run(postId, user.id);
+    const post = (await db.prepare("SELECT user_id FROM posts WHERE id = ?").get(postId)) as { user_id: number } | undefined;
     if (post && post.user_id !== user.id) {
-      db.prepare("INSERT INTO notifications (user_id, actor_id, type, post_id, body) VALUES (?,?,?,?,?)").run(
+      await db.prepare("INSERT INTO notifications (user_id, actor_id, type, post_id, body) VALUES (?,?,?,?,?)").run(
         post.user_id, user.id, "like", postId, `${user.name} liked your post`
       );
     }
@@ -135,7 +135,7 @@ export async function toggleLikeAction(postId: number) {
 }
 
 export async function addCommentAction(postId: number, body: string): Promise<{ error?: string; hidden?: boolean }> {
-  const user = getCurrentUser();
+  const user = await getCurrentUser();
   if (!user) return { error: "Not signed in" };
   const text = body.trim();
   if (!text) return { error: "Comment cannot be empty" };
@@ -143,13 +143,13 @@ export async function addCommentAction(postId: number, body: string): Promise<{ 
 
   const mod = moderateText(text);
   const db = getDb();
-  db.prepare("INSERT INTO comments (post_id, user_id, body, flagged, flag_reason) VALUES (?,?,?,?,?)").run(
+  await db.prepare("INSERT INTO comments (post_id, user_id, body, flagged, flag_reason) VALUES (?,?,?,?,?)").run(
     postId, user.id, text, mod.flagged ? 1 : 0, mod.reason
   );
   if (!mod.flagged) {
-    const post = db.prepare("SELECT user_id FROM posts WHERE id = ?").get(postId) as { user_id: number };
+    const post = (await db.prepare("SELECT user_id FROM posts WHERE id = ?").get(postId)) as { user_id: number } | undefined;
     if (post && post.user_id !== user.id) {
-      db.prepare("INSERT INTO notifications (user_id, actor_id, type, post_id, body) VALUES (?,?,?,?,?)").run(
+      await db.prepare("INSERT INTO notifications (user_id, actor_id, type, post_id, body) VALUES (?,?,?,?,?)").run(
         post.user_id, user.id, "comment", postId, `${user.name} commented: "${text.slice(0, 80)}"`
       );
     }
@@ -161,28 +161,28 @@ export async function addCommentAction(postId: number, body: string): Promise<{ 
 // ---------- Communities ----------
 
 export async function joinCommunityAction(communityId: number) {
-  const user = getCurrentUser();
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
   const db = getDb();
-  const community = db.prepare("SELECT * FROM communities WHERE id = ?").get(communityId) as { is_private: number; name: string } | undefined;
+  const community = (await db.prepare("SELECT * FROM communities WHERE id = ?").get(communityId)) as { is_private: number; name: string } | undefined;
   if (!community) return;
   const status = community.is_private ? "pending" : "active";
-  db.prepare("INSERT OR IGNORE INTO memberships (user_id, community_id, status) VALUES (?,?,?)").run(user!.id, communityId, status);
+  await db.prepare("INSERT OR IGNORE INTO memberships (user_id, community_id, status) VALUES (?,?,?)").run(user.id, communityId, status);
   revalidatePath("/communities");
   revalidatePath(`/communities/${communityId}`);
 }
 
 export async function leaveCommunityAction(communityId: number) {
-  const user = getCurrentUser();
+  const user = await getCurrentUser();
   if (!user) return;
   const db = getDb();
-  db.prepare("DELETE FROM memberships WHERE user_id = ? AND community_id = ?").run(user.id, communityId);
+  await db.prepare("DELETE FROM memberships WHERE user_id = ? AND community_id = ?").run(user.id, communityId);
   revalidatePath("/communities");
   revalidatePath(`/communities/${communityId}`);
 }
 
 export async function createCommunityAction(_prev: any, formData: FormData): Promise<{ error?: string }> {
-  const user = getCurrentUser();
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
   const name = String(formData.get("name") || "").trim();
   const description = String(formData.get("description") || "").trim();
@@ -193,15 +193,15 @@ export async function createCommunityAction(_prev: any, formData: FormData): Pro
   const db = getDb();
   let slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "community";
   let suffix = 0;
-  while (db.prepare("SELECT id FROM communities WHERE slug = ?").get(suffix ? `${slug}-${suffix}` : slug)) suffix++;
+  while (await db.prepare("SELECT id FROM communities WHERE slug = ?").get(suffix ? `${slug}-${suffix}` : slug)) suffix++;
   if (suffix) slug = `${slug}-${suffix}`;
 
   const hue = Math.floor(Math.random() * 360);
-  const info = db
+  const info = await db
     .prepare("INSERT INTO communities (name, slug, description, category, banner_hue, is_private, created_by) VALUES (?,?,?,?,?,?,?)")
-    .run(name, slug, description, category, hue, isPrivate, user!.id);
-  db.prepare("INSERT INTO memberships (user_id, community_id, role, status) VALUES (?,?,'admin','active')").run(
-    user!.id, Number(info.lastInsertRowid)
+    .run(name, slug, description, category, hue, isPrivate, user.id);
+  await db.prepare("INSERT INTO memberships (user_id, community_id, role, status) VALUES (?,?,'admin','active')").run(
+    user.id, Number(info.lastInsertRowid)
   );
   redirect(`/communities/${slug}`);
 }
@@ -209,18 +209,21 @@ export async function createCommunityAction(_prev: any, formData: FormData): Pro
 // ---------- Social ----------
 
 export async function toggleFollowAction(targetId: number) {
-  const user = getCurrentUser();
+  const user = await getCurrentUser();
   if (!user || user.id === targetId) return;
   const db = getDb();
-  const existing = db.prepare("SELECT 1 FROM follows WHERE follower_id = ? AND following_id = ?").get(user.id, targetId);
-  if (existing) db.prepare("DELETE FROM follows WHERE follower_id = ? AND following_id = ?").run(user.id, targetId);
-  else db.prepare("INSERT INTO follows (follower_id, following_id) VALUES (?,?)").run(user.id, targetId);
+  const existing = await db.prepare("SELECT 1 FROM follows WHERE follower_id = ? AND following_id = ?").get(user.id, targetId);
+  if (existing) {
+    await db.prepare("DELETE FROM follows WHERE follower_id = ? AND following_id = ?").run(user.id, targetId);
+  } else {
+    await db.prepare("INSERT INTO follows (follower_id, following_id) VALUES (?,?)").run(user.id, targetId);
+  }
   revalidatePath("/coach");
 }
 
 export async function markAllReadAction() {
-  const user = getCurrentUser();
+  const user = await getCurrentUser();
   if (!user) return;
-  getDb().prepare("UPDATE notifications SET read = 1 WHERE user_id = ?").run(user.id);
+  await getDb().prepare("UPDATE notifications SET read = 1 WHERE user_id = ?").run(user.id);
   revalidatePath("/notifications");
 }

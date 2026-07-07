@@ -87,7 +87,7 @@ export default function PostCard({
             <Link href={`/profile/${post.username}`} className="truncate font-semibold text-white hover:underline">
               {post.name}
             </Link>
-            <span className="text-xs text-ink-400">· {timeAgo(post.created_at)}</span>
+            <span className="text-xs text-ink-400" suppressHydrationWarning>· {timeAgo(post.created_at)}</span>
           </div>
           <div className="flex items-center gap-2 text-xs text-ink-400">
             <span className="chip">{post.goal_category}</span>

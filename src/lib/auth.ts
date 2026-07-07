@@ -52,16 +52,16 @@ export function clearSessionCookie() {
   cookies().delete(COOKIE);
 }
 
-export function getCurrentUser(): User | null {
+export async function getCurrentUser(): Promise<User | null> {
   const token = cookies().get(COOKIE)?.value;
   const userId = verifySessionToken(token);
   if (!userId) return null;
   const db = getDb();
-  return (db.prepare("SELECT * FROM users WHERE id = ?").get(userId) as User) || null;
+  return (await db.prepare("SELECT * FROM users WHERE id = ?").get(userId) as User) || null;
 }
 
-export function requireUser(): User {
-  const user = getCurrentUser();
+export async function requireUser(): Promise<User> {
+  const user = await getCurrentUser();
   if (!user) throw new Error("Not authenticated");
   return user;
 }

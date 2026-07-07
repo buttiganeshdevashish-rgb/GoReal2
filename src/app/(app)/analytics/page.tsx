@@ -6,26 +6,33 @@ import { WeeklyBars, TrendArea } from "@/components/Charts";
 
 export const dynamic = "force-dynamic";
 
-export default function AnalyticsPage() {
-  const user = getCurrentUser()!;
-  const streaks = computeStreaks(user.id);
-  const weekly = getWeeklyActivity(user.id);
-  const trend = getMonthlyTrend(user.id);
-  const heatmap = getHeatmap(user.id);
+export default async function AnalyticsPage() {
+  const user = (await getCurrentUser())!;
+  const streaks = await computeStreaks(user.id);
+  const weekly = await getWeeklyActivity(user.id);
+  const trend = await getMonthlyTrend(user.id);
+  const heatmap = await getHeatmap(user.id);
 
   const db = getDb();
-  const communityGrowth = (
-    db.prepare("SELECT COUNT(*) c FROM memberships WHERE status='active' AND joined_at >= datetime('now','-30 days')").get() as { c: number }
-  ).c;
-  const totalLikes = (
-    db.prepare("SELECT COUNT(*) c FROM likes l JOIN posts p ON p.id = l.post_id WHERE p.user_id = ?").get(user.id) as { c: number }
-  ).c;
-  const totalComments = (
-    db.prepare("SELECT COUNT(*) c FROM comments cm JOIN posts p ON p.id = cm.post_id WHERE p.user_id = ? AND cm.flagged = 0").get(user.id) as { c: number }
-  ).c;
-  const posts7 = (
-    db.prepare("SELECT COUNT(*) c FROM posts WHERE user_id = ? AND post_date >= ?").get(user.id, daysAgo(6)) as { c: number }
-  ).c;
+  const communityGrowthRow = (
+    await db.prepare("SELECT COUNT(*) c FROM memberships WHERE status='active' AND joined_at >= datetime('now','-30 days')").get()
+  ) as { c: number } | undefined;
+  const communityGrowth = communityGrowthRow ? communityGrowthRow.c : 0;
+
+  const totalLikesRow = (
+    await db.prepare("SELECT COUNT(*) c FROM likes l JOIN posts p ON p.id = l.post_id WHERE p.user_id = ?").get(user.id)
+  ) as { c: number } | undefined;
+  const totalLikes = totalLikesRow ? totalLikesRow.c : 0;
+
+  const totalCommentsRow = (
+    await db.prepare("SELECT COUNT(*) c FROM comments cm JOIN posts p ON p.id = cm.post_id WHERE p.user_id = ? AND cm.flagged = 0").get(user.id)
+  ) as { c: number } | undefined;
+  const totalComments = totalCommentsRow ? totalCommentsRow.c : 0;
+
+  const posts7Row = (
+    await db.prepare("SELECT COUNT(*) c FROM posts WHERE user_id = ? AND post_date >= ?").get(user.id, daysAgo(6))
+  ) as { c: number } | undefined;
+  const posts7 = posts7Row ? posts7Row.c : 0;
 
   return (
     <div className="space-y-6">

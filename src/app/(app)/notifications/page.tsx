@@ -22,9 +22,9 @@ function timeAgo(iso: string): string {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-export default function NotificationsPage() {
-  const user = getCurrentUser()!;
-  const notifications = getNotifications(user.id);
+export default async function NotificationsPage() {
+  const user = (await getCurrentUser())!;
+  const notifications = await getNotifications(user.id);
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -54,7 +54,7 @@ export default function NotificationsPage() {
               )}
               <div className="min-w-0 flex-1">
                 <p className="text-sm text-ink-100">{n.body}</p>
-                <p className="mt-0.5 text-xs text-ink-500">
+                <p className="mt-0.5 text-xs text-ink-500" suppressHydrationWarning>
                   {ICONS[n.type] || "🔔"} {timeAgo(n.created_at)}
                 </p>
               </div>

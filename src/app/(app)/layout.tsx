@@ -6,11 +6,11 @@ import { computeStreaks } from "@/lib/stats";
 
 export const dynamic = "force-dynamic";
 
-export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const user = getCurrentUser();
+export default async function AppLayout({ children }: { children: React.ReactNode }) {
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
-  const unread = getUnreadCount(user.id);
-  const streaks = computeStreaks(user.id);
+  const unread = await getUnreadCount(user.id);
+  const streaks = await computeStreaks(user.id);
 
   return (
     <div className="min-h-screen">

@@ -34,7 +34,11 @@ export default function AuthClient() {
     if (mode === "login" && !isLogout && !hasSession) {
       setIsLoggingIn(true);
       const timer = setTimeout(() => {
-        demoLoginAction().catch(() => setIsLoggingIn(false));
+        demoLoginAction()
+          .then(() => {
+            window.location.href = "/home";
+          })
+          .catch(() => setIsLoggingIn(false));
       }, 500);
       return () => clearTimeout(timer);
     }
@@ -114,9 +118,20 @@ export default function AuthClient() {
             <span className="h-px flex-1 bg-white/10" /> or <span className="h-px flex-1 bg-white/10" />
           </div>
 
-          <form action={demoLoginAction}>
-            <button className="btn-ghost w-full py-3">✨ Instant demo login (judge mode)</button>
-          </form>
+          <button
+            onClick={async () => {
+              setIsLoggingIn(true);
+              try {
+                await demoLoginAction();
+                window.location.href = "/home";
+              } catch (e) {
+                setIsLoggingIn(false);
+              }
+            }}
+            className="btn-ghost w-full py-3"
+          >
+            ✨ Instant demo login (judge mode)
+          </button>
           <p className="mt-3 text-center text-xs text-ink-500">
             Demo account: demo@goalreal.app · demo1234
           </p>

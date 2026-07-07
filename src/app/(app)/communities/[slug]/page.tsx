@@ -18,18 +18,19 @@ import JoinButton from "@/components/JoinButton";
 export const dynamic = "force-dynamic";
 
 export default async function CommunityPage({ params }: { params: { slug: string } }) {
-  const user = getCurrentUser()!;
-  const community = getCommunityBySlug(params.slug);
+  const user = (await getCurrentUser())!;
+  const community = await getCommunityBySlug(params.slug);
   if (!community) notFound();
 
-  const membership = getMembership(user.id, community.id);
+  const membership = await getMembership(user.id, community.id);
   const isMember = membership?.status === "active";
-  const feed = getCommunityFeed(user.id, community.id);
-  const comments = getComments(feed.map((p) => p.id));
-  const members = getCommunityMembers(community.id);
-  const leaderboard = getCommunityLeaderboard(community.id).slice(0, 8);
-  const stats = getCommunityStats(community.id);
-  const challenge = getCurrentChallenge(community.id);
+  const feed = await getCommunityFeed(user.id, community.id);
+  const comments = await getComments(feed.map((p) => p.id));
+  const members = await getCommunityMembers(community.id);
+  const leaderboardFull = await getCommunityLeaderboard(community.id);
+  const leaderboard = leaderboardFull.slice(0, 8);
+  const stats = await getCommunityStats(community.id);
+  const challenge = await getCurrentChallenge(community.id);
   const { insight } = await getCommunityInsight(community.id);
 
   return (

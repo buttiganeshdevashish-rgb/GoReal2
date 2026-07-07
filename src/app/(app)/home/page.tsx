@@ -10,15 +10,16 @@ import Avatar from "@/components/Avatar";
 
 export const dynamic = "force-dynamic";
 
-export default function HomePage({ searchParams }: { searchParams: { posted?: string } }) {
-  const user = getCurrentUser()!;
-  const feed = getFeed(user.id);
-  const comments = getComments(feed.map((p) => p.id));
-  const myCommunities = getUserCommunities(user.id);
-  const posted = hasPostedToday(user.id);
-  const streaks = computeStreaks(user.id);
-  const heatmap = getHeatmap(user.id, 62);
-  const partners = getPartnerRecommendations(user).slice(0, 3);
+export default async function HomePage({ searchParams }: { searchParams: { posted?: string } }) {
+  const user = (await getCurrentUser())!;
+  const feed = await getFeed(user.id);
+  const comments = await getComments(feed.map((p) => p.id));
+  const myCommunities = await getUserCommunities(user.id);
+  const posted = await hasPostedToday(user.id);
+  const streaks = await computeStreaks(user.id);
+  const heatmap = await getHeatmap(user.id, 62);
+  const partnersFull = await getPartnerRecommendations(user);
+  const partners = partnersFull.slice(0, 3);
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_310px]">

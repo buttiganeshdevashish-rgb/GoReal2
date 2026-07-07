@@ -9,18 +9,18 @@ import FollowButton from "@/components/FollowButton";
 
 export const dynamic = "force-dynamic";
 
-export default function ProfilePage({ params }: { params: { username: string } }) {
-  const viewer = getCurrentUser()!;
-  const user = getUserByUsername(params.username);
+export default async function ProfilePage({ params }: { params: { username: string } }) {
+  const viewer = (await getCurrentUser())!;
+  const user = await getUserByUsername(params.username);
   if (!user) notFound();
 
-  const posts = getUserPosts(viewer.id, user.id);
-  const comments = getComments(posts.map((p) => p.id));
-  const streaks = computeStreaks(user.id);
-  const heatmap = getHeatmap(user.id);
-  const badges = getBadges(user.id);
-  const { followers, following } = getFollowCounts(user.id);
-  const communities = getUserCommunities(user.id);
+  const posts = await getUserPosts(viewer.id, user.id);
+  const comments = await getComments(posts.map((p) => p.id));
+  const streaks = await computeStreaks(user.id);
+  const heatmap = await getHeatmap(user.id);
+  const badges = await getBadges(user.id);
+  const { followers, following } = await getFollowCounts(user.id);
+  const communities = await getUserCommunities(user.id);
   const isMe = viewer.id === user.id;
 
   return (
@@ -33,7 +33,7 @@ export default function ProfilePage({ params }: { params: { username: string } }
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="font-display text-2xl font-bold text-white">{user.name}</h1>
               <span className="text-sm text-ink-400">@{user.username}</span>
-              {!isMe && <FollowButton targetId={user.id} initialFollowing={isFollowing(viewer.id, user.id)} />}
+              {!isMe && <FollowButton targetId={user.id} initialFollowing={await isFollowing(viewer.id, user.id)} />}
             </div>
             {user.bio && <p className="mt-1.5 text-sm text-ink-300">{user.bio}</p>}
             <div className="mt-3 flex flex-wrap items-center gap-2">

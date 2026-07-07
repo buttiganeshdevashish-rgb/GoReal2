@@ -1,15 +1,29 @@
 import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
+import postgres from "postgres";
 
-let _db: Database.Database | null = null;
+export interface StatementWrapper {
+  all(params?: any): Promise<any[]>;
+  all(...params: any[]): Promise<any[]>;
+  get(params?: any): Promise<any | undefined>;
+  get(...params: any[]): Promise<any | undefined>;
+  run(params?: any): Promise<{ lastInsertRowid: number; changes: number }>;
+  run(...params: any[]): Promise<{ lastInsertRowid: number; changes: number }>;
+}
+
+export interface DbWrapper {
+  prepare(sql: string): StatementWrapper;
+  exec(sql: string): Promise<void>;
+  isPostgres: boolean;
+}
+
+let _db: DbWrapper | null = null;
+let _pgSql: any = null;
 
 const SCHEMA = `
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
-
 CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   name TEXT NOT NULL,
@@ -18,11 +32,11 @@ CREATE TABLE IF NOT EXISTS users (
   bio TEXT DEFAULT '',
   goal TEXT DEFAULT '',
   goal_category TEXT DEFAULT 'Custom',
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS communities (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   slug TEXT NOT NULL UNIQUE,
   description TEXT DEFAULT '',
@@ -30,100 +44,156 @@ CREATE TABLE IF NOT EXISTS communities (
   banner_hue INTEGER NOT NULL DEFAULT 260,
   is_private INTEGER NOT NULL DEFAULT 0,
   created_by INTEGER NOT NULL REFERENCES users(id),
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS memberships (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   community_id INTEGER NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
-  role TEXT NOT NULL DEFAULT 'member',           -- member | admin
-  status TEXT NOT NULL DEFAULT 'active',          -- active | pending
-  joined_at TEXT NOT NULL DEFAULT (datetime('now')),
+  role TEXT NOT NULL DEFAULT 'member',
+  status TEXT NOT NULL DEFAULT 'active',
+  joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(user_id, community_id)
 );
 
 CREATE TABLE IF NOT EXISTS posts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   community_id INTEGER REFERENCES communities(id) ON DELETE SET NULL,
   image_url TEXT DEFAULT '',
   caption TEXT NOT NULL,
   progress_note TEXT DEFAULT '',
-  post_date TEXT NOT NULL,                        -- YYYY-MM-DD (one per user per day)
+  post_date TEXT NOT NULL,
   flagged INTEGER NOT NULL DEFAULT 0,
   flag_reason TEXT DEFAULT '',
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(user_id, post_date)
 );
 
 CREATE TABLE IF NOT EXISTS likes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(post_id, user_id)
 );
 
 CREATE TABLE IF NOT EXISTS comments (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   body TEXT NOT NULL,
   flagged INTEGER NOT NULL DEFAULT 0,
   flag_reason TEXT DEFAULT '',
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS follows (
   follower_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   following_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (follower_id, following_id)
 );
 
 CREATE TABLE IF NOT EXISTS notifications (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  type TEXT NOT NULL,                             -- like | comment | milestone | reminder | join
+  type TEXT NOT NULL,
   post_id INTEGER REFERENCES posts(id) ON DELETE CASCADE,
   body TEXT NOT NULL,
   read INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS challenges (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   community_id INTEGER NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
   description TEXT DEFAULT '',
-  week_start TEXT NOT NULL,                       -- YYYY-MM-DD (Monday)
+  week_start TEXT NOT NULL,
   generated_by TEXT NOT NULL DEFAULT 'ai',
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(community_id, week_start)
 );
 
 CREATE TABLE IF NOT EXISTS ai_insights (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  scope TEXT NOT NULL,                            -- user | community
+  id SERIAL PRIMARY KEY,
+  scope TEXT NOT NULL,
   user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
   community_id INTEGER REFERENCES communities(id) ON DELETE CASCADE,
   week_start TEXT NOT NULL,
-  content TEXT NOT NULL,                          -- JSON payload
-  source TEXT NOT NULL DEFAULT 'engine',          -- openai | engine
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  content TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'engine',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-CREATE INDEX IF NOT EXISTS idx_posts_user ON posts(user_id, post_date);
-CREATE INDEX IF NOT EXISTS idx_posts_community ON posts(community_id, post_date);
-CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, read);
-CREATE INDEX IF NOT EXISTS idx_memberships_community ON memberships(community_id, status);
 `;
 
-export function getDb(): Database.Database {
-  if (_db) return _db;
+function translateSql(sql: string): string {
+  let res = sql;
+
+  // 1. Convert INSERT OR IGNORE INTO ... to INSERT INTO ... ON CONFLICT DO NOTHING
+  if (res.toUpperCase().includes("INSERT OR IGNORE INTO")) {
+    res = res.replace(/INSERT OR IGNORE INTO/gi, "INSERT INTO");
+    if (!res.toUpperCase().includes("ON CONFLICT")) {
+      res = res + " ON CONFLICT DO NOTHING";
+    }
+  }
+
+  // 2. Convert SQLite date/time functions
+  res = res.replace(/datetime\s*\(\s*['"]now['"]\s*,\s*['"]-30 days['"]\s*\)/gi, "now() - interval '30 days'");
+  res = res.replace(/date\s*\(\s*['"]now['"]\s*,\s*['"]-6 days['"]\s*\)/gi, "current_date - interval '6 days'");
+  res = res.replace(/date\s*\(\s*['"]now['"]\s*,\s*['"]localtime['"]\s*\)/gi, "current_date");
+  res = res.replace(/datetime\s*\(\s*['"]now['"]\s*\)/gi, "now()");
+  res = res.replace(/\(datetime\s*\(\s*['"]now['"]\s*\)\)/gi, "now()");
+
+  // 3. Convert strftime('%w', post_date) to EXTRACT(dow FROM post_date::date)
+  res = res.replace(/CAST\s*\(\s*strftime\s*\(\s*['"]%w['"]\s*,\s*(\w+)\s*\)\s*AS\s*INTEGER\s*\)/gi, "EXTRACT(dow FROM CAST($1 AS date))::integer");
   
+  // 4. Convert CAST(substr(created_at, 12, 2) AS INTEGER) to EXTRACT(hour FROM created_at)
+  res = res.replace(/CAST\s*\(\s*substr\s*\(\s*created_at\s*,\s*12\s*,\s*2\s*\)\s*AS\s*INTEGER\s*\)/gi, "EXTRACT(hour FROM created_at)::integer");
+
+  return res;
+}
+
+function extractNamedParams(sql: string, paramsObj: any): { sql: string; values: any[] } {
+  const matches = sql.match(/@\w+/g);
+  if (!matches) return { sql, values: [] };
+
+  let converted = sql;
+  const values: any[] = [];
+  const uniqueParams = Array.from(new Set(matches));
+
+  uniqueParams.forEach((param, idx) => {
+    const key = param.slice(1);
+    const val = paramsObj[key];
+    values.push(val === undefined ? null : val);
+    converted = converted.replace(new RegExp(param + "\\b", "g"), `$${idx + 1}`);
+  });
+
+  return { sql: converted, values };
+}
+
+function isConnectionError(err: any): boolean {
+  if (!err) return false;
+  const msg = String(err.message || err).toLowerCase();
+  const code = String(err.code || "").toLowerCase();
+  return (
+    msg.includes("connect_timeout") ||
+    msg.includes("econnrefused") ||
+    msg.includes("etimedout") ||
+    msg.includes("connection timeout") ||
+    msg.includes("timeout") ||
+    msg.includes("connect") ||
+    msg.includes("epipe") ||
+    msg.includes("econnreset") ||
+    code.includes("timeout") ||
+    code.includes("connect")
+  );
+}
+
+function getSqliteDbWrapper(): DbWrapper {
   let dbPath: string;
   if (process.env.VERCEL || process.env.NODE_ENV === "production") {
     dbPath = "/tmp/goalreal.db";
@@ -133,14 +203,222 @@ export function getDb(): Database.Database {
     dbPath = path.join(dataDir, "goalreal.db");
   }
 
-  _db = new Database(dbPath);
-  _db.exec(SCHEMA);
-  const row = _db.prepare("SELECT COUNT(*) AS c FROM users").get() as { c: number };
+  // Clean SQLite tables creation SQLite-style Schema
+  const SQLITE_SCHEMA = SCHEMA
+    .replace(/SERIAL PRIMARY KEY/gi, "INTEGER PRIMARY KEY AUTOINCREMENT")
+    .replace(/TIMESTAMPTZ/gi, "TEXT")
+    .replace(/DEFAULT\s+now\s*\(\s*\)/gi, "DEFAULT CURRENT_TIMESTAMP");
+
+  const sqliteDb = new Database(dbPath);
+  sqliteDb.exec(`
+    PRAGMA journal_mode = WAL;
+    PRAGMA foreign_keys = ON;
+    ${SQLITE_SCHEMA}
+    CREATE INDEX IF NOT EXISTS idx_posts_user ON posts(user_id, post_date);
+    CREATE INDEX IF NOT EXISTS idx_posts_community ON posts(community_id, post_date);
+    CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, read);
+    CREATE INDEX IF NOT EXISTS idx_memberships_community ON memberships(community_id, status);
+  `);
+
+  const sqliteDbWrapper: DbWrapper = {
+    isPostgres: false,
+    prepare(sqlString: string) {
+      const stmt = sqliteDb.prepare(sqlString);
+      return {
+        async all(...args: any[]) {
+          if (
+            args.length === 1 &&
+            typeof args[0] === "object" &&
+            args[0] !== null &&
+            !Array.isArray(args[0]) &&
+            sqlString.includes("@")
+          ) {
+            return stmt.all(args[0]);
+          }
+          const flatArgs = args.length === 1 && Array.isArray(args[0]) ? args[0] : args;
+          return stmt.all(...flatArgs);
+        },
+        async get(...args: any[]) {
+          if (
+            args.length === 1 &&
+            typeof args[0] === "object" &&
+            args[0] !== null &&
+            !Array.isArray(args[0]) &&
+            sqlString.includes("@")
+          ) {
+            return stmt.get(args[0]);
+          }
+          const flatArgs = args.length === 1 && Array.isArray(args[0]) ? args[0] : args;
+          return stmt.get(...flatArgs);
+        },
+        async run(...args: any[]) {
+          let res;
+          if (
+            args.length === 1 &&
+            typeof args[0] === "object" &&
+            args[0] !== null &&
+            !Array.isArray(args[0]) &&
+            sqlString.includes("@")
+          ) {
+            res = stmt.run(args[0]);
+          } else {
+            const flatArgs = args.length === 1 && Array.isArray(args[0]) ? args[0] : args;
+            res = stmt.run(...flatArgs);
+          }
+          return {
+            lastInsertRowid: Number(res.lastInsertRowid),
+            changes: res.changes,
+          };
+        },
+      };
+    },
+    async exec(sqlString: string) {
+      sqliteDb.exec(sqlString);
+    },
+  };
+
+  const row = sqliteDb.prepare("SELECT COUNT(*) AS c FROM users").get() as { c: number };
   if (row.c === 0) {
-    // Lazy import avoids cycle
     const { seed } = require("./seed") as typeof import("./seed");
-    seed(_db);
+    seed(sqliteDb);
   }
+
+  return sqliteDbWrapper;
+}
+
+export function getDb(): DbWrapper {
+  if (_db) return _db;
+
+  const dbUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+
+  if (dbUrl) {
+    // ------------------ POSTGRESQL / SUPABASE ------------------
+    _pgSql = postgres(dbUrl, {
+      max: 10,
+      idle_timeout: 20,
+      connect_timeout: 10,
+    });
+
+    const pgDb: DbWrapper = {
+      isPostgres: true,
+      prepare(sqlString: string) {
+        return {
+          async all(...args: any[]) {
+            try {
+              let translated = translateSql(sqlString);
+              let values: any[] = [];
+
+              if (
+                args.length === 1 &&
+                typeof args[0] === "object" &&
+                args[0] !== null &&
+                !Array.isArray(args[0]) &&
+                sqlString.includes("@")
+              ) {
+                const extracted = extractNamedParams(translated, args[0]);
+                translated = extracted.sql;
+                values = extracted.values;
+              } else {
+                const flatArgs = args.length === 1 && Array.isArray(args[0]) ? args[0] : args;
+                values = flatArgs;
+                let paramCount = 1;
+                while (translated.includes("?")) {
+                  translated = translated.replace("?", `$${paramCount++}`);
+                }
+              }
+
+              const rows = await _pgSql.unsafe(translated, values);
+              return Array.from(rows);
+            } catch (err: any) {
+              if (isConnectionError(err)) {
+                console.warn("Postgres connection failed, falling back to SQLite:", err);
+                const localDb = getSqliteDbWrapper();
+                _db = localDb;
+                return localDb.prepare(sqlString).all(...args);
+              }
+              throw err;
+            }
+          },
+          async get(...args: any[]) {
+            try {
+              const rows = await this.all(...args);
+              return rows[0];
+            } catch (err: any) {
+              if (isConnectionError(err)) {
+                console.warn("Postgres connection failed, falling back to SQLite:", err);
+                const localDb = getSqliteDbWrapper();
+                _db = localDb;
+                return localDb.prepare(sqlString).get(...args);
+              }
+              throw err;
+            }
+          },
+          async run(...args: any[]) {
+            try {
+              let translated = translateSql(sqlString);
+
+              const upper = translated.toUpperCase().trim();
+              if (upper.startsWith("INSERT INTO") && !upper.includes("RETURNING")) {
+                translated = translated + " RETURNING id";
+              }
+
+              let values: any[] = [];
+              if (
+                args.length === 1 &&
+                typeof args[0] === "object" &&
+                args[0] !== null &&
+                !Array.isArray(args[0]) &&
+                sqlString.includes("@")
+              ) {
+                const extracted = extractNamedParams(translated, args[0]);
+                translated = extracted.sql;
+                values = extracted.values;
+              } else {
+                const flatArgs = args.length === 1 && Array.isArray(args[0]) ? args[0] : args;
+                values = flatArgs;
+                let paramCount = 1;
+                while (translated.includes("?")) {
+                  translated = translated.replace("?", `$${paramCount++}`);
+                }
+              }
+
+              const rows = await _pgSql.unsafe(translated, values);
+              const lastInsertRowid = rows[0]?.id || rows[0]?.lastInsertRowid || 0;
+              return { lastInsertRowid: Number(lastInsertRowid), changes: rows.length };
+            } catch (err: any) {
+              if (isConnectionError(err)) {
+                console.warn("Postgres connection failed, falling back to SQLite:", err);
+                const localDb = getSqliteDbWrapper();
+                _db = localDb;
+                return localDb.prepare(sqlString).run(...args);
+              }
+              throw err;
+            }
+          },
+        };
+      },
+      async exec(sqlString: string) {
+        try {
+          const translated = translateSql(sqlString);
+          await _pgSql.unsafe(translated);
+        } catch (err: any) {
+          if (isConnectionError(err)) {
+            console.warn("Postgres connection failed, falling back to SQLite:", err);
+            const localDb = getSqliteDbWrapper();
+            _db = localDb;
+            await localDb.exec(sqlString);
+            return;
+          }
+          throw err;
+        }
+      },
+    };
+
+    _db = pgDb;
+  } else {
+    _db = getSqliteDbWrapper();
+  }
+
   return _db;
 }
 

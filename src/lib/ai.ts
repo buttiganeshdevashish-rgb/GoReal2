@@ -4,7 +4,7 @@ import type { InsightPayload, User } from "./types";
 
 // ---------- OpenAI wrapper (configurable endpoint, graceful fallback) ----------
 
-async function callOpenAI(system: string, user: string): Promise<string | null> {
+async function callOpenAI(system: string, userText: string): Promise<string | null> {
   const key = process.env.OPENAI_API_KEY;
   if (!key) return null;
   try {
@@ -16,7 +16,7 @@ async function callOpenAI(system: string, user: string): Promise<string | null> 
         model: process.env.OPENAI_MODEL || "gpt-4o-mini",
         messages: [
           { role: "system", content: system },
-          { role: "user", content: user },
+          { role: "user", content: userText },
         ],
         temperature: 0.7,
         max_tokens: 500,
@@ -34,17 +34,18 @@ async function callOpenAI(system: string, user: string): Promise<string | null> 
 
 // ---------- 1. AI Weekly Coach ----------
 
-function buildUserWeekStats(userId: number) {
+async function buildUserWeekStats(userId: number) {
   const db = getDb();
   const days: { date: string; posted: boolean; dow: number; hour: number | null; likes: number }[] = [];
   for (let i = 6; i >= 0; i--) {
     const date = daysAgo(i);
-    const post = db.prepare("SELECT id, created_at FROM posts WHERE user_id = ? AND post_date = ?").get(userId, date) as
+    const post = (await db.prepare("SELECT id, created_at FROM posts WHERE user_id = ? AND post_date = ?").get(userId, date)) as
       | { id: number; created_at: string }
       | undefined;
-    const likes = post
-      ? (db.prepare("SELECT COUNT(*) c FROM likes WHERE post_id = ?").get(post.id) as { c: number }).c
-      : 0;
+    const likesRow = post
+      ? ((await db.prepare("SELECT COUNT(*) c FROM likes WHERE post_id = ?").get(post.id)) as { c: number })
+      : null;
+    const likes = likesRow ? likesRow.c : 0;
     days.push({
       date,
       posted: !!post,
@@ -53,18 +54,19 @@ function buildUserWeekStats(userId: number) {
       likes,
     });
   }
-  const prevWeekPosts = (
-    db.prepare("SELECT COUNT(*) c FROM posts WHERE user_id = ? AND post_date >= ? AND post_date < ?").get(userId, daysAgo(13), daysAgo(6)) as { c: number }
-  ).c;
+  const prevWeekPostsRow = (await db
+    .prepare("SELECT COUNT(*) c FROM posts WHERE user_id = ? AND post_date >= ? AND post_date < ?")
+    .get(userId, daysAgo(13), daysAgo(6))) as { c: number } | undefined;
+  const prevWeekPosts = prevWeekPostsRow ? prevWeekPostsRow.c : 0;
   return { days, prevWeekPosts };
 }
 
 const DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-export function engineWeeklyCoach(user: User): InsightPayload {
-  const { days, prevWeekPosts } = buildUserWeekStats(user.id);
+export async function engineWeeklyCoach(user: User): Promise<InsightPayload> {
+  const { days, prevWeekPosts } = await buildUserWeekStats(user.id);
   const posted = days.filter((d) => d.posted).length;
-  const s = computeStreaks(user.id);
+  const s = await computeStreaks(user.id);
   const missedDows = days.filter((d) => !d.posted).map((d) => DOW[d.dow]);
   const hours = days.filter((d) => d.hour !== null).map((d) => d.hour as number);
   const avgHour = hours.length ? Math.round(hours.reduce((a, b) => a + b, 0) / hours.length) : null;
@@ -102,16 +104,16 @@ export function engineWeeklyCoach(user: User): InsightPayload {
 export async function getWeeklyCoach(user: User): Promise<{ insight: InsightPayload; source: string }> {
   const db = getDb();
   const wk = mondayOf(new Date());
-  const cached = db
+  const cached = (await db
     .prepare("SELECT content, source FROM ai_insights WHERE scope='user' AND user_id=? AND week_start=?")
-    .get(user.id, wk) as { content: string; source: string } | undefined;
+    .get(user.id, wk)) as { content: string; source: string } | undefined;
   if (cached) return { insight: JSON.parse(cached.content), source: cached.source };
 
-  const engine = engineWeeklyCoach(user);
+  const engine = await engineWeeklyCoach(user);
   let insight = engine;
   let source = "engine";
 
-  const { days, prevWeekPosts } = buildUserWeekStats(user.id);
+  const { days, prevWeekPosts } = await buildUserWeekStats(user.id);
   const raw = await callOpenAI(
     `You are a supportive but direct accountability coach for a goal-tracking app. Reply with JSON: {"headline": string, "observations": string[3-4 short sentences], "suggestion": string (one actionable tip)}. Be specific, use the data, no fluff.`,
     JSON.stringify({ goal: user.goal, category: user.goal_category, thisWeek: days, prevWeekPosts })
@@ -129,7 +131,7 @@ export async function getWeeklyCoach(user: User): Promise<{ insight: InsightPayl
     } catch {}
   }
 
-  db.prepare("INSERT INTO ai_insights (scope, user_id, week_start, content, source) VALUES ('user', ?, ?, ?, ?)").run(
+  await db.prepare("INSERT INTO ai_insights (scope, user_id, week_start, content, source) VALUES ('user', ?, ?, ?, ?)").run(
     user.id, wk, JSON.stringify(insight), source
   );
   return { insight, source };
@@ -137,71 +139,72 @@ export async function getWeeklyCoach(user: User): Promise<{ insight: InsightPayl
 
 // ---------- 2. AI Accountability Partner ----------
 
-export function getPartnerRecommendations(user: User): { user: User; reason: string; match: number }[] {
+export async function getPartnerRecommendations(user: User): Promise<{ user: User; reason: string; match: number }[]> {
   const db = getDb();
-  const others = db.prepare("SELECT * FROM users WHERE id != ?").all(user.id) as User[];
-  const mine = computeStreaks(user.id);
-  const followed = new Set(
-    (db.prepare("SELECT following_id f FROM follows WHERE follower_id = ?").all(user.id) as { f: number }[]).map((r) => r.f)
-  );
+  const others = (await db.prepare("SELECT * FROM users WHERE id != ?").all(user.id)) as User[];
+  const mine = await computeStreaks(user.id);
+  const followedRows = (await db.prepare("SELECT following_id f FROM follows WHERE follower_id = ?").all(user.id)) as { f: number }[];
+  const followed = new Set(followedRows.map((r) => r.f));
 
-  const scored = others
-    .filter((o) => !followed.has(o.id))
-    .map((o) => {
-      const s = computeStreaks(o.id);
-      let match = 50;
-      const reasons: string[] = [];
-      if (o.goal_category === user.goal_category) {
-        match += 30;
-        reasons.push(`also grinding on ${o.goal_category.toLowerCase()}`);
-      }
-      const consistencyGap = Math.abs(s.consistency30 - mine.consistency30);
-      if (consistencyGap <= 15) {
-        match += 15;
-        reasons.push("matches your consistency level");
-      } else if (s.consistency30 > mine.consistency30) {
-        match += 8;
-        reasons.push(`${s.consistency30}% consistent — will pull you up`);
-      }
-      if (Math.abs(s.current - mine.current) <= 5) {
-        match += 5;
-        reasons.push(`${s.current}-day streak, right beside yours`);
-      }
-      return { user: o, match: Math.min(match, 98), reason: reasons.slice(0, 2).join(" · ") || "active daily poster" };
-    });
+  const scored = await Promise.all(
+    others
+      .filter((o) => !followed.has(o.id))
+      .map(async (o) => {
+        const s = await computeStreaks(o.id);
+        let match = 50;
+        const reasons: string[] = [];
+        if (o.goal_category === user.goal_category) {
+          match += 30;
+          reasons.push(`also grinding on ${o.goal_category.toLowerCase()}`);
+        }
+        const consistencyGap = Math.abs(s.consistency30 - mine.consistency30);
+        if (consistencyGap <= 15) {
+          match += 15;
+          reasons.push("matches your consistency level");
+        } else if (s.consistency30 > mine.consistency30) {
+          match += 8;
+          reasons.push(`${s.consistency30}% consistent — will pull you up`);
+        }
+        if (Math.abs(s.current - mine.current) <= 5) {
+          match += 5;
+          reasons.push(`${s.current}-day streak, right beside yours`);
+        }
+        return { user: o, match: Math.min(match, 98), reason: reasons.slice(0, 2).join(" · ") || "active daily poster" };
+      })
+  );
   return scored.sort((a, b) => b.match - a.match).slice(0, 4);
 }
 
 // ---------- 3. AI Community Insights + 5. Challenge generator ----------
 
-export function engineCommunityInsight(communityId: number): InsightPayload {
+export async function engineCommunityInsight(communityId: number): Promise<InsightPayload> {
   const db = getDb();
-  const thisWeek = (
-    db.prepare("SELECT COUNT(*) c FROM posts WHERE community_id = ? AND post_date >= ?").get(communityId, daysAgo(6)) as { c: number }
-  ).c;
-  const lastWeek = (
-    db.prepare("SELECT COUNT(*) c FROM posts WHERE community_id = ? AND post_date >= ? AND post_date < ?").get(communityId, daysAgo(13), daysAgo(6)) as { c: number }
-  ).c;
-  const members = (
-    db.prepare("SELECT COUNT(*) c FROM memberships WHERE community_id = ? AND status='active'").get(communityId) as { c: number }
-  ).c;
-  const weekendPosts = (
-    db.prepare(
-      `SELECT COUNT(*) c FROM posts WHERE community_id = ? AND post_date >= ?
-       AND CAST(strftime('%w', post_date) AS INTEGER) IN (0, 6)`
-    ).get(communityId, daysAgo(13)) as { c: number }
-  ).c;
-  const weekdayPosts = (
-    db.prepare(
-      `SELECT COUNT(*) c FROM posts WHERE community_id = ? AND post_date >= ?
-       AND CAST(strftime('%w', post_date) AS INTEGER) NOT IN (0, 6)`
-    ).get(communityId, daysAgo(13)) as { c: number }
-  ).c;
-  const eveningShare = (
-    db.prepare(
-      `SELECT COUNT(*) c FROM posts WHERE community_id = ? AND post_date >= ? AND CAST(substr(created_at, 12, 2) AS INTEGER) < 20`
-    ).get(communityId, daysAgo(13)) as { c: number }
-  ).c;
+  const thisWeekRow = (await db.prepare("SELECT COUNT(*) c FROM posts WHERE community_id = ? AND post_date >= ?").get(communityId, daysAgo(6))) as { c: number } | undefined;
+  const thisWeek = thisWeekRow ? thisWeekRow.c : 0;
+
+  const lastWeekRow = (await db.prepare("SELECT COUNT(*) c FROM posts WHERE community_id = ? AND post_date >= ? AND post_date < ?").get(communityId, daysAgo(13), daysAgo(6))) as { c: number } | undefined;
+  const lastWeek = lastWeekRow ? lastWeekRow.c : 0;
+
+  const membersRow = (await db.prepare("SELECT COUNT(*) c FROM memberships WHERE community_id = ? AND status='active'").get(communityId)) as { c: number } | undefined;
+  const members = membersRow ? membersRow.c : 0;
+
+  const weekendPostsRow = (await db.prepare(
+    `SELECT COUNT(*) c FROM posts WHERE community_id = ? AND post_date >= ?
+     AND CAST(strftime('%w', post_date) AS INTEGER) IN (0, 6)`
+  ).get(communityId, daysAgo(13))) as { c: number } | undefined;
+  const weekendPosts = weekendPostsRow ? weekendPostsRow.c : 0;
+
+  const weekdayPostsRow = (await db.prepare(
+    `SELECT COUNT(*) c FROM posts WHERE community_id = ? AND post_date >= ?
+     AND CAST(strftime('%w', post_date) AS INTEGER) NOT IN (0, 6)`
+  ).get(communityId, daysAgo(13))) as { c: number } | undefined;
+  const weekdayPosts = weekdayPostsRow ? weekdayPostsRow.c : 0;
+
+  const eveningShareRow = (await db.prepare(
+    `SELECT COUNT(*) c FROM posts WHERE community_id = ? AND post_date >= ? AND CAST(substr(created_at, 12, 2) AS INTEGER) < 20`
+  ).get(communityId, daysAgo(13))) as { c: number } | undefined;
+  const eveningShare = eveningShareRow ? eveningShareRow.c : 0;
+
   const total2w = weekendPosts + weekdayPosts;
   const delta = lastWeek > 0 ? Math.round(((thisWeek - lastWeek) / lastWeek) * 100) : 0;
   const weekendRate = total2w ? Math.round((weekendPosts / total2w) * 100) : 0;
@@ -235,13 +238,13 @@ export function engineCommunityInsight(communityId: number): InsightPayload {
 export async function getCommunityInsight(communityId: number): Promise<{ insight: InsightPayload; source: string }> {
   const db = getDb();
   const wk = mondayOf(new Date());
-  const cached = db
+  const cached = (await db
     .prepare("SELECT content, source FROM ai_insights WHERE scope='community' AND community_id=? AND week_start=?")
-    .get(communityId, wk) as { content: string; source: string } | undefined;
+    .get(communityId, wk)) as { content: string; source: string } | undefined;
   if (cached) return { insight: JSON.parse(cached.content), source: cached.source };
 
-  const insight = engineCommunityInsight(communityId);
-  db.prepare("INSERT INTO ai_insights (scope, community_id, week_start, content, source) VALUES ('community', ?, ?, ?, 'engine')").run(
+  const insight = await engineCommunityInsight(communityId);
+  await db.prepare("INSERT INTO ai_insights (scope, community_id, week_start, content, source) VALUES ('community', ?, ?, ?, 'engine')").run(
     communityId, wk, JSON.stringify(insight)
   );
   return { insight, source: "engine" };
@@ -270,26 +273,26 @@ const CHALLENGE_TEMPLATES: Record<string, [string, string][]> = {
   ],
 };
 
-export function generateChallenge(communityId: number): { title: string; description: string } {
+export async function generateChallenge(communityId: number): Promise<{ title: string; description: string }> {
   const db = getDb();
-  const community = db.prepare("SELECT category FROM communities WHERE id = ?").get(communityId) as { category: string };
-  const pool = CHALLENGE_TEMPLATES[community?.category] || CHALLENGE_TEMPLATES.Fitness;
+  const community = (await db.prepare("SELECT category FROM communities WHERE id = ?").get(communityId)) as { category: string } | undefined;
+  const pool = CHALLENGE_TEMPLATES[community?.category || ""] || CHALLENGE_TEMPLATES.Fitness;
   const idx = (communityId + Math.floor(Date.now() / (7 * 864e5))) % pool.length;
   return { title: pool[idx][0], description: pool[idx][1] };
 }
 
-export function getCurrentChallenge(communityId: number) {
+export async function getCurrentChallenge(communityId: number) {
   const db = getDb();
   const wk = mondayOf(new Date());
-  let ch = db.prepare("SELECT * FROM challenges WHERE community_id = ? AND week_start = ?").get(communityId, wk) as
+  let ch = (await db.prepare("SELECT * FROM challenges WHERE community_id = ? AND week_start = ?").get(communityId, wk)) as
     | { id: number; title: string; description: string; week_start: string }
     | undefined;
   if (!ch) {
-    const gen = generateChallenge(communityId);
-    db.prepare("INSERT OR IGNORE INTO challenges (community_id, title, description, week_start) VALUES (?,?,?,?)").run(
+    const gen = await generateChallenge(communityId);
+    await db.prepare("INSERT OR IGNORE INTO challenges (community_id, title, description, week_start) VALUES (?,?,?,?)").run(
       communityId, gen.title, gen.description, wk
     );
-    ch = db.prepare("SELECT * FROM challenges WHERE community_id = ? AND week_start = ?").get(communityId, wk) as typeof ch;
+    ch = (await db.prepare("SELECT * FROM challenges WHERE community_id = ? AND week_start = ?").get(communityId, wk)) as typeof ch;
   }
   return ch;
 }

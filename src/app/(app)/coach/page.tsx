@@ -8,9 +8,15 @@ import FollowButton from "@/components/FollowButton";
 export const dynamic = "force-dynamic";
 
 export default async function CoachPage() {
-  const user = getCurrentUser()!;
+  const user = (await getCurrentUser())!;
   const { insight, source } = await getWeeklyCoach(user);
-  const partners = getPartnerRecommendations(user);
+  const partners = await getPartnerRecommendations(user);
+  const partnersWithFollow = await Promise.all(
+    partners.map(async (p) => {
+      const following = await isFollowing(user.id, p.user.id);
+      return { ...p, following };
+    })
+  );
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -58,7 +64,7 @@ export default async function CoachPage() {
         <h2 className="font-display text-lg font-bold text-white">🤝 Recommended accountability partners</h2>
         <p className="mt-1 text-sm text-ink-400">Matched by goal, schedule, and consistency — people who'll keep you honest.</p>
         <div className="mt-5 space-y-4">
-          {partners.map(({ user: p, reason, match }) => (
+          {partnersWithFollow.map(({ user: p, reason, match, following }) => (
             <div key={p.id} className="flex items-center gap-4 rounded-xl bg-white/[0.03] p-3.5">
               <Link href={`/profile/${p.username}`}>
                 <Avatar name={p.name} hue={p.avatar_hue} size={46} />
@@ -71,7 +77,7 @@ export default async function CoachPage() {
                 <p className="mt-0.5 truncate text-sm text-ink-400">🎯 {p.goal}</p>
                 <p className="truncate text-xs text-ink-500">{reason}</p>
               </div>
-              <FollowButton targetId={p.id} initialFollowing={isFollowing(user.id, p.id)} />
+              <FollowButton targetId={p.id} initialFollowing={following} />
             </div>
           ))}
         </div>
