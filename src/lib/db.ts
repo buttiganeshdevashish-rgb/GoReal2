@@ -363,8 +363,15 @@ export function getDb(): DbWrapper {
   if (_db) return _db;
 
   const dbUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+  const isCorrectPgUrl = dbUrl && (dbUrl.startsWith("postgres://") || dbUrl.startsWith("postgresql://"));
 
-  if (dbUrl) {
+  if (dbUrl && !isCorrectPgUrl) {
+    console.warn(
+      `DATABASE_URL is defined but is not a valid PostgreSQL connection string (must start with postgres:// or postgresql://). Received: "${dbUrl}". Falling back to SQLite.`
+    );
+  }
+
+  if (isCorrectPgUrl) {
     // ------------------ POSTGRESQL / SUPABASE ------------------
     _pgSql = postgres(dbUrl, {
       max: 10,
