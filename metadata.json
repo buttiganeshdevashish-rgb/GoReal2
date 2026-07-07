@@ -1,0 +1,8 @@
+{
+  "name": "GoalReal",
+  "description": "BeReal for Goals — social accountability for personal goals. Stay consistent with your goals through small, supportive communities. One proof a day. Real streaks. Real accountability.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
