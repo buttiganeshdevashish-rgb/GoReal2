@@ -151,7 +151,7 @@ const COMMENTS_POOL = [
 // Per-user posting probability — creates realistic variance in consistency
 const CONSISTENCY = [0.93, 0.9, 0.86, 0.88, 0.82, 0.95, 0.8, 0.85, 0.7, 0.75, 0.78, 0.65, 0.72, 0.68, 0.74, 0.83, 0.7, 0.62, 0.77, 0.87];
 
-export function seed(db: Database.Database) {
+export async function seed(db: any) {
   const rand = rng(42);
   const pick = <T,>(arr: readonly T[]) => arr[Math.floor(rand() * arr.length)];
 
@@ -160,14 +160,14 @@ export function seed(db: Database.Database) {
   );
   const pw = hashPassword("demo1234");
   for (const [name, username, email, bio, goal, cat, hue] of USERS) {
-    insertUser.run(email, pw, name, username, hue, bio, goal, cat);
+    await insertUser.run(email, pw, name, username, hue, bio, goal, cat);
   }
 
   const insertCommunity = db.prepare(
     "INSERT INTO communities (name, slug, description, category, banner_hue, is_private, created_by) VALUES (?,?,?,?,?,?,?)"
   );
   for (const [name, slug, desc, cat, hue, priv, creator] of COMMUNITIES) {
-    insertCommunity.run(name, slug, desc, cat, hue, priv, creator);
+    await insertCommunity.run(name, slug, desc, cat, hue, priv, creator);
   }
 
   const insertMembership = db.prepare(
@@ -175,10 +175,12 @@ export function seed(db: Database.Database) {
   );
   for (const [cIdx, members] of Object.entries(MEMBERSHIP_MAP)) {
     const communityId = Number(cIdx) + 1;
-    members.forEach((uIdx, i) => {
+    let i = 0;
+    for (const uIdx of members) {
       const role = i === 0 ? "admin" : "member";
-      insertMembership.run(uIdx + 1, communityId, role, "active", 60 - Math.floor(rand() * 20));
-    });
+      await insertMembership.run(uIdx + 1, communityId, role, "active", 60 - Math.floor(rand() * 20));
+      i++;
+    }
   }
 
   // Posts: last 60 days per user, weighted by consistency; nobody posts "today" for demo user
@@ -218,7 +220,7 @@ export function seed(db: Database.Database) {
       const createdAt = `${date} ${String(hour).padStart(2, "0")}:${String(Math.floor(rand() * 60)).padStart(2, "0")}:00`;
       const img = `/seed/${cat.toLowerCase()}-${(Math.floor(rand() * 3) + 1)}.svg`;
       const note = pick(["Felt great", "Tough day but done", "Best session this week", "Steady progress", "Pushed through", "Easy win today"]);
-      const info = insertPost.run(u, communityId, img, caption, note, date, createdAt);
+      const info = await insertPost.run(u, communityId, img, caption, note, date, createdAt);
       const pid = Number(info.lastInsertRowid);
       (postIdsByUser[u] ||= []).push(pid);
       allPostIds.push({ id: pid, userId: u, date });
@@ -236,13 +238,15 @@ export function seed(db: Database.Database) {
       const liker = Math.floor(rand() * USERS.length) + 1;
       if (liker !== post.userId) likers.add(liker);
     }
-    for (const liker of likers) insertLike.run(post.id, liker, `${post.date} ${String(10 + Math.floor(rand() * 12)).padStart(2, "0")}:00:00`);
+    for (const liker of likers) {
+      await insertLike.run(post.id, liker, `${post.date} ${String(10 + Math.floor(rand() * 12)).padStart(2, "0")}:00:00`);
+    }
     if (rand() < 0.45 * ageBoost) {
       const n = 1 + Math.floor(rand() * 3);
       for (let i = 0; i < n; i++) {
         const commenter = Math.floor(rand() * USERS.length) + 1;
         if (commenter === post.userId) continue;
-        insertComment.run(post.id, commenter, pick(COMMENTS_POOL), `${post.date} ${String(11 + Math.floor(rand() * 10)).padStart(2, "0")}:30:00`);
+        await insertComment.run(post.id, commenter, pick(COMMENTS_POOL), `${post.date} ${String(11 + Math.floor(rand() * 10)).padStart(2, "0")}:30:00`);
       }
     }
   }
@@ -253,7 +257,9 @@ export function seed(db: Database.Database) {
     const n = 3 + Math.floor(rand() * 6);
     for (let i = 0; i < n; i++) {
       const target = Math.floor(rand() * USERS.length) + 1;
-      if (target !== u) insertFollow.run(u, target);
+      if (target !== u) {
+        await insertFollow.run(u, target);
+      }
     }
   }
 
@@ -263,13 +269,13 @@ export function seed(db: Database.Database) {
   );
   const demoPosts = postIdsByUser[1] || [];
   const lastPost = demoPosts[demoPosts.length - 1];
-  insertNotif.run(1, 2, "like", lastPost, "Aarav Mehta liked your post", 0, 32);
-  insertNotif.run(1, 3, "comment", lastPost, 'Priya Sharma commented: "This consistency is inspiring!"', 0, 55);
-  insertNotif.run(1, 8, "like", lastPost, "Karthik Rao liked your post", 0, 140);
-  insertNotif.run(1, 6, "milestone", null, "Vikram Nair just hit a 30-day streak! 🎉", 0, 300);
-  insertNotif.run(1, null, "reminder", null, "You haven't posted today. Keep your streak alive! 🔥", 0, 10);
-  insertNotif.run(1, 4, "like", demoPosts[demoPosts.length - 2] ?? lastPost, "Rohan Iyer liked your post", 1, 60 * 26);
-  insertNotif.run(1, 11, "comment", demoPosts[demoPosts.length - 2] ?? lastPost, 'Meera Joshi commented: "Respect the grind 💪"', 1, 60 * 30);
+  await insertNotif.run(1, 2, "like", lastPost, "Aarav Mehta liked your post", 0, 32);
+  await insertNotif.run(1, 3, "comment", lastPost, 'Priya Sharma commented: "This consistency is inspiring!"', 0, 55);
+  await insertNotif.run(1, 8, "like", lastPost, "Karthik Rao liked your post", 0, 140);
+  await insertNotif.run(1, 6, "milestone", null, "Vikram Nair just hit a 30-day streak! 🎉", 0, 300);
+  await insertNotif.run(1, null, "reminder", null, "You haven't posted today. Keep your streak alive! 🔥", 0, 10);
+  await insertNotif.run(1, 4, "like", demoPosts[demoPosts.length - 2] ?? lastPost, "Rohan Iyer liked your post", 1, 60 * 26);
+  await insertNotif.run(1, 11, "comment", demoPosts[demoPosts.length - 2] ?? lastPost, 'Meera Joshi commented: "Respect the grind 💪"', 1, 60 * 30);
 
   // Weekly challenges (current week) for each community
   const insertChallenge = db.prepare(
@@ -283,5 +289,7 @@ export function seed(db: Database.Database) {
     [4, "Sunrise Sessions", "Complete your practice before 8 AM at least 4 days this week."],
     [5, "Ship & Tell", "Ship one user-facing improvement and post a before/after."],
   ] as const;
-  for (const [cid, title, desc] of CHALLENGES) insertChallenge.run(cid, title, desc, wk);
+  for (const [cid, title, desc] of CHALLENGES) {
+    await insertChallenge.run(cid, title, desc, wk);
+  }
 }

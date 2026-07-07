@@ -329,6 +329,36 @@ async function executePgUnsafe(sqlString: string, args: any[], appendReturning: 
   return await _pgSql.unsafe(translated, values);
 }
 
+let _postgresSeededCheck = false;
+
+async function checkAndSeedPostgres(pgDb: DbWrapper) {
+  if (_postgresSeededCheck) return;
+  _postgresSeededCheck = true;
+  try {
+    const row = await pgDb.prepare("SELECT COUNT(*) AS c FROM users").get();
+    if (!row || Number(row.c) === 0) {
+      console.log("Postgres database is empty, seeding initial data...");
+      const { seed } = require("./seed") as typeof import("./seed");
+      await seed(pgDb);
+      console.log("Postgres database seeded successfully.");
+    }
+  } catch (err: any) {
+    if (isTableMissingError(err)) {
+      console.log("Postgres relation missing during startup check, executing SCHEMA...");
+      try {
+        await pgDb.exec(SCHEMA);
+        const { seed } = require("./seed") as typeof import("./seed");
+        await seed(pgDb);
+        console.log("Postgres schema created and database seeded.");
+      } catch (schemaErr) {
+        console.error("Failed to seed Postgres after schema creation:", schemaErr);
+      }
+    } else {
+      console.error("Error during Postgres seed check:", err);
+    }
+  }
+}
+
 export function getDb(): DbWrapper {
   if (_db) return _db;
 
@@ -355,6 +385,8 @@ export function getDb(): DbWrapper {
                 console.log("Postgres relation missing, executing SCHEMA...");
                 try {
                   await pgDb.exec(SCHEMA);
+                  const { seed } = require("./seed") as typeof import("./seed");
+                  await seed(pgDb);
                   const rows = await executePgUnsafe(sqlString, args);
                   return Array.from(rows);
                 } catch (schemaErr) {
@@ -394,6 +426,8 @@ export function getDb(): DbWrapper {
                 console.log("Postgres relation missing, executing SCHEMA...");
                 try {
                   await pgDb.exec(SCHEMA);
+                  const { seed } = require("./seed") as typeof import("./seed");
+                  await seed(pgDb);
                   const rows = await executePgUnsafe(sqlString, args, true);
                   const lastInsertRowid = rows[0]?.id || rows[0]?.lastInsertRowid || 0;
                   return { lastInsertRowid: Number(lastInsertRowid), changes: rows.length };
@@ -430,6 +464,8 @@ export function getDb(): DbWrapper {
     };
 
     _db = pgDb;
+    // Trigger background seed check
+    checkAndSeedPostgres(pgDb).catch((e) => console.error("Background seed check failed:", e));
   } else {
     _db = getSqliteDbWrapper();
   }
