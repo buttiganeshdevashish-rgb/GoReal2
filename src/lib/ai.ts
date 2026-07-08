@@ -153,7 +153,7 @@ export async function getPartnerRecommendations(user: User): Promise<{ user: Use
         const s = await computeStreaks(o.id);
         let match = 50;
         const reasons: string[] = [];
-        if (o.goal_category === user.goal_category) {
+        if (o.goal_category && user.goal_category && o.goal_category.toLowerCase() === user.goal_category.toLowerCase()) {
           match += 30;
           reasons.push(`also grinding on ${o.goal_category.toLowerCase()}`);
         }

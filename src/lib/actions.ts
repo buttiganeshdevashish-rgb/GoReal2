@@ -22,29 +22,42 @@ export async function signupAction(_prev: any, formData: FormData): Promise<{ er
   if (password.length < 8) return { error: "Password must be at least 8 characters." };
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { error: "Please enter a valid email." };
 
-  const db = getDb();
-  if (await db.prepare("SELECT id FROM users WHERE email = ?").get(email)) return { error: "An account with this email already exists." };
+  try {
+    const db = getDb();
+    if (await db.prepare("SELECT id FROM users WHERE email = ?").get(email)) return { error: "An account with this email already exists." };
 
-  let username = email.split("@")[0].replace(/[^a-z0-9_.]/gi, "").toLowerCase() || "user";
-  let suffix = 0;
-  while (await db.prepare("SELECT id FROM users WHERE username = ?").get(suffix ? `${username}${suffix}` : username)) suffix++;
-  if (suffix) username = `${username}${suffix}`;
+    let username = email.split("@")[0].replace(/[^a-z0-9_.]/gi, "").toLowerCase() || "user";
+    let suffix = 0;
+    while (await db.prepare("SELECT id FROM users WHERE username = ?").get(suffix ? `${username}${suffix}` : username)) suffix++;
+    if (suffix) username = `${username}${suffix}`;
 
-  const hue = Math.floor(Math.random() * 360);
-  const info = await db
-    .prepare("INSERT INTO users (email, password_hash, name, username, avatar_hue, goal, goal_category, bio) VALUES (?,?,?,?,?,?,?,?)")
-    .run(email, hashPassword(password), name, username, hue, goal || "Show up every day", category, "");
-  setSessionCookie(Number(info.lastInsertRowid));
+    const hue = Math.floor(Math.random() * 360);
+    const info = await db
+      .prepare("INSERT INTO users (email, password_hash, name, username, avatar_hue, goal, goal_category, bio) VALUES (?,?,?,?,?,?,?,?)")
+      .run(email, hashPassword(password), name, username, hue, goal || "Show up every day", category, "");
+    setSessionCookie(Number(info.lastInsertRowid));
+  } catch (err: any) {
+    console.error("Signup exception caught in server action:", err);
+    return { error: err.message || "An unexpected error occurred during signup." };
+  }
+
   redirect("/home");
 }
 
 export async function loginAction(_prev: any, formData: FormData): Promise<{ error?: string }> {
   const email = String(formData.get("email") || "").trim().toLowerCase();
   const password = String(formData.get("password") || "");
-  const db = getDb();
-  const user = (await db.prepare("SELECT * FROM users WHERE email = ?").get(email)) as User | undefined;
-  if (!user || !verifyPassword(password, user.password_hash)) return { error: "Invalid email or password." };
-  setSessionCookie(user.id);
+  
+  try {
+    const db = getDb();
+    const user = (await db.prepare("SELECT * FROM users WHERE email = ?").get(email)) as User | undefined;
+    if (!user || !verifyPassword(password, user.password_hash)) return { error: "Invalid email or password." };
+    setSessionCookie(user.id);
+  } catch (err: any) {
+    console.error("Login exception caught in server action:", err);
+    return { error: err.message || "An unexpected error occurred during sign-in." };
+  }
+
   redirect("/home");
 }
 
