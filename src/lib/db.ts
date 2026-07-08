@@ -154,6 +154,35 @@ function translateSql(sql: string): string {
   // 4. Convert CAST(substr(created_at, 12, 2) AS INTEGER) to EXTRACT(hour FROM created_at)
   res = res.replace(/CAST\s*\(\s*substr\s*\(\s*created_at\s*,\s*12\s*,\s*2\s*\)\s*AS\s*INTEGER\s*\)/gi, "EXTRACT(hour FROM created_at)::integer");
 
+  // 5. Convert dynamic SQLite datetime intervals for Postgres
+  res = res.replace(/datetime\s*\(\s*['"]now['"]\s*,\s*['"]-['"]\s*\|\|\s*([\s\S]+?)\s*\|\|\s*['"]\s*(days|minutes)['"]\s*\)/gi, "now() - ($1 || ' $2')::interval");
+
+  // 6. Replace boolean = integer comparisons/updates with boolean types for Postgres
+  res = res.replace(/\bcm\.flagged\s*=\s*0\b/gi, "cm.flagged = false");
+  res = res.replace(/\bp\.flagged\s*=\s*0\b/gi, "p.flagged = false");
+  res = res.replace(/\bread\s*=\s*0\b/gi, "read = false");
+  res = res.replace(/\bread\s*=\s*1\b/gi, "read = true");
+  res = res.replace(/\bis_private\s*=\s*0\b/gi, "is_private = false");
+  res = res.replace(/\bis_private\s*=\s*1\b/gi, "is_private = true");
+
+  // 7. Inject explicit cast for boolean columns inserted/updated as integer values
+  res = res.replace(
+    "INSERT INTO posts (user_id, community_id, image_url, caption, progress_note, post_date, flagged, flag_reason) VALUES (?,?,?,?,?,?,?,?)",
+    "INSERT INTO posts (user_id, community_id, image_url, caption, progress_note, post_date, flagged, flag_reason) VALUES (?,?,?,?,?,?,?::integer::boolean,?)"
+  );
+  res = res.replace(
+    "INSERT INTO comments (post_id, user_id, body, flagged, flag_reason) VALUES (?,?,?,?,?)",
+    "INSERT INTO comments (post_id, user_id, body, flagged, flag_reason) VALUES (?,?,?,?::integer::boolean,?)"
+  );
+  res = res.replace(
+    "INSERT INTO communities (name, slug, description, category, banner_hue, is_private, created_by) VALUES (?,?,?,?,?,?,?)",
+    "INSERT INTO communities (name, slug, description, category, banner_hue, is_private, created_by) VALUES (?,?,?,?,?,?::integer::boolean,?)"
+  );
+  res = res.replace(
+    "INSERT INTO notifications (user_id, actor_id, type, post_id, body, read, created_at) VALUES (?,?,?,?,?,?,datetime('now','-' || ? || ' minutes'))",
+    "INSERT INTO notifications (user_id, actor_id, type, post_id, body, read, created_at) VALUES (?,?,?,?,?,?::integer::boolean,now() - (? || ' minutes')::interval)"
+  );
+
   return res;
 }
 
@@ -188,8 +217,11 @@ function isConnectionError(err: any): boolean {
     msg.includes("connect") ||
     msg.includes("epipe") ||
     msg.includes("econnreset") ||
+    msg.includes("enotfound") ||
+    msg.includes("dns") ||
     code.includes("timeout") ||
-    code.includes("connect")
+    code.includes("connect") ||
+    code.includes("enotfound")
   );
 }
 
