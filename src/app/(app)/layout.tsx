@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();
-  if (!user) redirect("/login");
+  if (!user) redirect("/api/logout");
   const unread = await getUnreadCount(user.id);
   const streaks = await computeStreaks(user.id);
 

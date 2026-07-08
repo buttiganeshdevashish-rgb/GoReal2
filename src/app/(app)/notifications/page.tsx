@@ -23,7 +23,8 @@ function timeAgo(iso: string): string {
 }
 
 export default async function NotificationsPage() {
-  const user = (await getCurrentUser())!;
+  const user = await getCurrentUser();
+  if (!user) return null;
   const notifications = await getNotifications(user.id);
 
   return (

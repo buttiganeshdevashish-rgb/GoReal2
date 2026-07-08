@@ -7,7 +7,8 @@ import { WeeklyBars, TrendArea } from "@/components/Charts";
 export const dynamic = "force-dynamic";
 
 export default async function AnalyticsPage() {
-  const user = (await getCurrentUser())!;
+  const user = await getCurrentUser();
+  if (!user) return null;
   const streaks = await computeStreaks(user.id);
   const weekly = await getWeeklyActivity(user.id);
   const trend = await getMonthlyTrend(user.id);

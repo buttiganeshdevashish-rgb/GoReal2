@@ -11,7 +11,8 @@ import Avatar from "@/components/Avatar";
 export const dynamic = "force-dynamic";
 
 export default async function HomePage({ searchParams }: { searchParams: { posted?: string } }) {
-  const user = (await getCurrentUser())!;
+  const user = await getCurrentUser();
+  if (!user) return null;
   const feed = await getFeed(user.id);
   const comments = await getComments(feed.map((p) => p.id));
   const myCommunities = await getUserCommunities(user.id);

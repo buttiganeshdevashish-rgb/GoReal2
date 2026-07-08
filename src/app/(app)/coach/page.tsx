@@ -8,7 +8,8 @@ import FollowButton from "@/components/FollowButton";
 export const dynamic = "force-dynamic";
 
 export default async function CoachPage() {
-  const user = (await getCurrentUser())!;
+  const user = await getCurrentUser();
+  if (!user) return null;
   const { insight, source } = await getWeeklyCoach(user);
   const partners = await getPartnerRecommendations(user);
   const partnersWithFollow = await Promise.all(

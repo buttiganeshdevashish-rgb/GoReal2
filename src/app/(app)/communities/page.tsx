@@ -7,7 +7,8 @@ import CreateCommunity from "@/components/CreateCommunity";
 export const dynamic = "force-dynamic";
 
 export default async function CommunitiesPage() {
-  const user = (await getCurrentUser())!;
+  const user = await getCurrentUser();
+  if (!user) return null;
   const communities = await getCommunities(user.id);
 
   return (

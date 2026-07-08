@@ -10,7 +10,8 @@ import FollowButton from "@/components/FollowButton";
 export const dynamic = "force-dynamic";
 
 export default async function ProfilePage({ params }: { params: { username: string } }) {
-  const viewer = (await getCurrentUser())!;
+  const viewer = await getCurrentUser();
+  if (!viewer) return null;
   const user = await getUserByUsername(params.username);
   if (!user) notFound();
 

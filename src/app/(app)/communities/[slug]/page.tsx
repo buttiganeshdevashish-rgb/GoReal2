@@ -18,7 +18,8 @@ import JoinButton from "@/components/JoinButton";
 export const dynamic = "force-dynamic";
 
 export default async function CommunityPage({ params }: { params: { slug: string } }) {
-  const user = (await getCurrentUser())!;
+  const user = await getCurrentUser();
+  if (!user) return null;
   const community = await getCommunityBySlug(params.slug);
   if (!community) notFound();
 
