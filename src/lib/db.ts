@@ -329,6 +329,22 @@ function isTableMissingError(err: any): boolean {
   );
 }
 
+function cleanPgRow(row: any): any {
+  if (!row) return row;
+  const newRow = { ...row };
+  for (const key of Object.keys(newRow)) {
+    const val = newRow[key];
+    if (val instanceof Date) {
+      if (key.includes("date") || key === "week_start") {
+        newRow[key] = dateStr(val);
+      } else {
+        newRow[key] = val.toISOString();
+      }
+    }
+  }
+  return newRow;
+}
+
 async function executePgUnsafe(sqlString: string, args: any[], appendReturning: boolean = false): Promise<any[]> {
   let translated = translateSql(sqlString);
   if (appendReturning) {
@@ -418,7 +434,7 @@ export function getDb(): DbWrapper {
           async all(...args: any[]) {
             try {
               const rows = await executePgUnsafe(sqlString, args);
-              return Array.from(rows);
+              return Array.from(rows).map(cleanPgRow);
             } catch (err: any) {
               if (isTableMissingError(err)) {
                 console.log("Postgres relation missing, executing SCHEMA...");
@@ -427,7 +443,7 @@ export function getDb(): DbWrapper {
                   const { seed } = require("./seed") as typeof import("./seed");
                   await seed(pgDb);
                   const rows = await executePgUnsafe(sqlString, args);
-                  return Array.from(rows);
+                  return Array.from(rows).map(cleanPgRow);
                 } catch (schemaErr) {
                   console.error("Failed to recreate schema on Postgres:", schemaErr);
                 }
