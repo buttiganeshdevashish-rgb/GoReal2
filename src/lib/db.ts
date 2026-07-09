@@ -340,6 +340,34 @@ function cleanPgRow(row: any): any {
       } else {
         newRow[key] = val.toISOString();
       }
+    } else if (typeof val === "string") {
+      const lowerKey = key.toLowerCase();
+      if (
+        key === "id" ||
+        key === "c" ||
+        key === "count" ||
+        lowerKey.endsWith("_id") ||
+        lowerKey.endsWith("_count") ||
+        lowerKey.endsWith("_hue") ||
+        lowerKey === "is_member" ||
+        lowerKey === "is_pending" ||
+        lowerKey === "liked_by_me" ||
+        lowerKey === "read" ||
+        lowerKey === "flagged" ||
+        lowerKey === "is_private" ||
+        lowerKey === "streak" ||
+        lowerKey === "current_streak" ||
+        lowerKey === "longest_streak" ||
+        lowerKey === "consistency" ||
+        lowerKey === "posts7" ||
+        lowerKey === "activetoday" ||
+        lowerKey === "totalposts"
+      ) {
+        const num = Number(val);
+        if (!isNaN(num)) {
+          newRow[key] = num;
+        }
+      }
     }
   }
   return newRow;

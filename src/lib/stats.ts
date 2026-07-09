@@ -100,8 +100,8 @@ export async function getWeeklyActivity(userId: number): Promise<{ day: string; 
     
     out.push({
       day: d.toLocaleDateString("en-US", { weekday: "short" }),
-      posts: postsRow ? postsRow.c : 0,
-      likes: likesRow ? likesRow.c : 0,
+      posts: postsRow ? Number(postsRow.c || 0) : 0,
+      likes: likesRow ? Number(likesRow.c || 0) : 0,
     });
   }
   return out;
@@ -114,7 +114,7 @@ export async function getMonthlyTrend(userId: number): Promise<{ week: string; p
     const start = daysAgo(w * 7 + 6);
     const end = daysAgo(w * 7);
     const postsRow = (await db.prepare("SELECT COUNT(*) c FROM posts WHERE user_id = ? AND post_date >= ? AND post_date <= ?").get(userId, start, end)) as { c: number };
-    const posts = postsRow ? postsRow.c : 0;
+    const posts = postsRow ? Number(postsRow.c || 0) : 0;
     out.push({ week: end.slice(5), posts, consistency: Math.round((posts / 7) * 100) });
   }
   return out;

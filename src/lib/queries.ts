@@ -136,9 +136,9 @@ export async function getCommunityStats(communityId: number): Promise<{ posts7: 
   const totalPostsRow = (await db.prepare("SELECT COUNT(*) c FROM posts WHERE community_id = ?").get(communityId)) as { c: number };
   const activeTodayRow = (await db.prepare("SELECT COUNT(DISTINCT user_id) c FROM posts WHERE community_id = ? AND post_date = date('now','localtime')").get(communityId)) as { c: number };
   return {
-    posts7: posts7Row ? posts7Row.c : 0,
-    members: membersRow ? membersRow.c : 0,
-    totalPosts: totalPostsRow ? totalPostsRow.c : 0,
-    activeToday: activeTodayRow ? activeTodayRow.c : 0,
+    posts7: posts7Row ? Number(posts7Row.c || 0) : 0,
+    members: membersRow ? Number(membersRow.c || 0) : 0,
+    totalPosts: totalPostsRow ? Number(totalPostsRow.c || 0) : 0,
+    activeToday: activeTodayRow ? Number(activeTodayRow.c || 0) : 0,
   };
 }

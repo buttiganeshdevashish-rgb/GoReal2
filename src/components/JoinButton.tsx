@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useEffect } from "react";
 import { joinCommunityAction, leaveCommunityAction } from "@/lib/actions";
 
 export default function JoinButton({
@@ -16,6 +16,10 @@ export default function JoinButton({
 }) {
   const [state, setState] = useState<"none" | "member" | "pending">(isMember ? "member" : isPending ? "pending" : "none");
   const [, startTransition] = useTransition();
+
+  useEffect(() => {
+    setState(isMember ? "member" : isPending ? "pending" : "none");
+  }, [isMember, isPending]);
 
   if (state === "member") {
     return (

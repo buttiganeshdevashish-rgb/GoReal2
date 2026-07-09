@@ -107,7 +107,22 @@ export async function getWeeklyCoach(user: User): Promise<{ insight: InsightPayl
   const cached = (await db
     .prepare("SELECT content, source FROM ai_insights WHERE scope='user' AND user_id=? AND week_start=?")
     .get(user.id, wk)) as { content: string; source: string } | undefined;
-  if (cached) return { insight: JSON.parse(cached.content), source: cached.source };
+  if (cached) {
+    try {
+      const insight = JSON.parse(cached.content);
+      if (insight && Array.isArray(insight.stats)) {
+        insight.stats = insight.stats.map((s: any) => {
+          if (s && typeof s.value === "string" && /^0+$/.test(s.value)) {
+            return { ...s, value: "0" };
+          }
+          return s;
+        });
+      }
+      return { insight, source: cached.source };
+    } catch {
+      // fallback
+    }
+  }
 
   const engine = await engineWeeklyCoach(user);
   let insight = engine;
