@@ -4,8 +4,6 @@ import { cookies } from "next/headers";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
-  cookies().delete("goalreal_session");
-
   let baseUrl = process.env.APP_URL;
   if (!baseUrl) {
     const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "localhost:3000";
@@ -24,6 +22,8 @@ export async function GET(req: Request) {
     baseUrl = "http://localhost:3000";
   }
 
-  return NextResponse.redirect(new URL("/login?logout=true", baseUrl));
+  const res = NextResponse.redirect(new URL("/login?logout=true", baseUrl));
+  res.cookies.delete("goalreal_session");
+  return res;
 }
 

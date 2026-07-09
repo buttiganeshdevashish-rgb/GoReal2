@@ -51,6 +51,11 @@ export async function middleware(req: NextRequest) {
   }
 
   if ((pathname === "/login" || pathname === "/") && hasValid) {
+    if (req.nextUrl.searchParams.has("logout")) {
+      const res = NextResponse.next();
+      res.cookies.delete(COOKIE);
+      return res;
+    }
     const url = req.nextUrl.clone();
     url.pathname = "/home";
     return NextResponse.redirect(url);

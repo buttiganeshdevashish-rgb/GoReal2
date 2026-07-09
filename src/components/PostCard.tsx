@@ -7,8 +7,15 @@ import Avatar from "./Avatar";
 import { toggleLikeAction, addCommentAction } from "@/lib/actions";
 import type { Post, CommentRow } from "@/lib/types";
 
-function timeAgo(iso: string): string {
-  const then = new Date(iso.includes("T") ? iso : iso.replace(" ", "T"));
+function timeAgo(iso: any): string {
+  if (!iso) return "";
+  let then: Date;
+  if (iso instanceof Date) {
+    then = iso;
+  } else {
+    const str = String(iso);
+    then = new Date(str.includes("T") ? str : str.replace(" ", "T"));
+  }
   const s = Math.max(1, Math.floor((Date.now() - then.getTime()) / 1000));
   if (s < 60) return `${s}s`;
   if (s < 3600) return `${Math.floor(s / 60)}m`;

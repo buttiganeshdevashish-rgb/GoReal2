@@ -13,8 +13,15 @@ const ICONS: Record<string, string> = {
   join: "👥",
 };
 
-function timeAgo(iso: string): string {
-  const then = new Date(iso.includes("T") ? iso : iso.replace(" ", "T") + "Z");
+function timeAgo(iso: any): string {
+  if (!iso) return "";
+  let then: Date;
+  if (iso instanceof Date) {
+    then = iso;
+  } else {
+    const str = String(iso);
+    then = new Date(str.includes("T") ? str : str.replace(" ", "T") + "Z");
+  }
   const s = Math.max(1, Math.floor((Date.now() - then.getTime()) / 1000));
   if (s < 60) return `${s}s ago`;
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
