@@ -23,6 +23,28 @@ function timeAgo(iso: any): string {
   return `${Math.floor(s / 86400)}d`;
 }
 
+function formatDate(dateStr: string): string {
+  if (!dateStr) return "";
+  try {
+    const parts = dateStr.split("-");
+    if (parts.length === 3) {
+      const monthNum = parseInt(parts[1], 10);
+      const day = parseInt(parts[2], 10);
+      const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      if (monthNum >= 1 && monthNum <= 12) {
+        return `${months[monthNum - 1]} ${day}`;
+      }
+    }
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) {
+      return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    }
+  } catch (e) {
+    // ignore
+  }
+  return dateStr;
+}
+
 export default function PostCard({
   post,
   comments,
@@ -35,7 +57,7 @@ export default function PostCard({
   viewerHue: number;
 }) {
   const [liked, setLiked] = useState(!!post.liked_by_me);
-  const [likeCount, setLikeCount] = useState(post.like_count || 0);
+  const [likeCount, setLikeCount] = useState(Number(post.like_count || 0));
   const [showComments, setShowComments] = useState(false);
   const [localComments, setLocalComments] = useState<CommentRow[]>(comments);
   const [draft, setDraft] = useState("");
@@ -44,7 +66,7 @@ export default function PostCard({
 
   const like = () => {
     setLiked(!liked);
-    setLikeCount((c) => c + (liked ? -1 : 1));
+    setLikeCount((c) => Number(c) + (liked ? -1 : 1));
     startTransition(() => {
       toggleLikeAction(post.id);
     });
@@ -131,7 +153,7 @@ export default function PostCard({
           >
             <span className="text-base">💬</span> {localComments.length}
           </button>
-          <span className="ml-auto text-xs text-ink-500">{post.post_date}</span>
+          <span className="ml-auto text-xs text-ink-500">{formatDate(post.post_date)}</span>
         </div>
 
         <AnimatePresence>

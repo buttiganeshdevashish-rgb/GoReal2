@@ -45,7 +45,7 @@ async function buildUserWeekStats(userId: number) {
     const likesRow = post
       ? ((await db.prepare("SELECT COUNT(*) c FROM likes WHERE post_id = ?").get(post.id)) as { c: number })
       : null;
-    const likes = likesRow ? likesRow.c : 0;
+    const likes = likesRow ? Number(likesRow.c || 0) : 0;
     days.push({
       date,
       posted: !!post,
@@ -57,7 +57,7 @@ async function buildUserWeekStats(userId: number) {
   const prevWeekPostsRow = (await db
     .prepare("SELECT COUNT(*) c FROM posts WHERE user_id = ? AND post_date >= ? AND post_date < ?")
     .get(userId, daysAgo(13), daysAgo(6))) as { c: number } | undefined;
-  const prevWeekPosts = prevWeekPostsRow ? prevWeekPostsRow.c : 0;
+  const prevWeekPosts = prevWeekPostsRow ? Number(prevWeekPostsRow.c || 0) : 0;
   return { days, prevWeekPosts };
 }
 
@@ -70,7 +70,7 @@ export async function engineWeeklyCoach(user: User): Promise<InsightPayload> {
   const missedDows = days.filter((d) => !d.posted).map((d) => DOW[d.dow]);
   const hours = days.filter((d) => d.hour !== null).map((d) => d.hour as number);
   const avgHour = hours.length ? Math.round(hours.reduce((a, b) => a + b, 0) / hours.length) : null;
-  const totalLikes = days.reduce((a, d) => a + d.likes, 0);
+  const totalLikes = days.reduce((a, d) => a + Number(d.likes || 0), 0);
   const delta = prevWeekPosts > 0 ? Math.round(((posted - prevWeekPosts) / prevWeekPosts) * 100) : posted > 0 ? 100 : 0;
 
   const observations: string[] = [];
