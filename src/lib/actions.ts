@@ -231,6 +231,15 @@ export async function toggleFollowAction(targetId: number) {
   } else {
     await db.prepare("INSERT INTO follows (follower_id, following_id) VALUES (?,?)").run(user.id, targetId);
   }
+  try {
+    const target = await db.prepare("SELECT username FROM users WHERE id = ?").get(targetId) as { username: string } | undefined;
+    if (target) {
+      revalidatePath(`/profile/${target.username}`);
+    }
+    revalidatePath(`/profile/${user.username}`);
+  } catch (e) {
+    // ignore
+  }
   revalidatePath("/coach");
 }
 

@@ -378,7 +378,11 @@ async function executePgUnsafe(sqlString: string, args: any[], appendReturning: 
   if (appendReturning) {
     const upper = translated.toUpperCase().trim();
     if (upper.startsWith("INSERT INTO") && !upper.includes("RETURNING")) {
-      translated = translated + " RETURNING id";
+      if (upper.includes("INTO FOLLOWS")) {
+        translated = translated + " RETURNING follower_id AS id";
+      } else {
+        translated = translated + " RETURNING id";
+      }
     }
   }
 

@@ -129,9 +129,18 @@ export async function getWeeklyCoach(user: User): Promise<{ insight: InsightPayl
   let source = "engine";
 
   const { days, prevWeekPosts } = await buildUserWeekStats(user.id);
+  const aiThisWeek = days.map((d) => ({
+    date: d.date,
+    posted: d.posted,
+    day_of_week: DOW[d.dow],
+    submission_hour_of_day_24h_clock: d.hour,
+    likes_received: d.likes,
+  }));
+
   const raw = await callOpenAI(
-    `You are a supportive but direct accountability coach for a goal-tracking app. Reply with JSON: {"headline": string, "observations": string[3-4 short sentences], "suggestion": string (one actionable tip)}. Be specific, use the data, no fluff.`,
-    JSON.stringify({ goal: user.goal, category: user.goal_category, thisWeek: days, prevWeekPosts })
+    `You are a supportive but direct accountability coach for a goal-tracking app. Reply with JSON: {"headline": string, "observations": string[3-4 short sentences], "suggestion": string (one actionable tip)}. Be specific, use the data, no fluff.
+CRITICAL: The field "submission_hour_of_day_24h_clock" represents the hour of the day (24-hour clock, e.g. 14 means 2:00 PM / 14:00) when the user submitted their proof post, NOT the number of hours they spent doing the activity. Do NOT invent or fabricate statistics, and never claim they worked/coded/exercised for that many hours.`,
+    JSON.stringify({ goal: user.goal, category: user.goal_category, thisWeek: aiThisWeek, prevWeekPosts })
   );
   if (raw) {
     try {

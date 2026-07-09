@@ -83,11 +83,16 @@ export default function AppNav({
           <img src="/favicon.svg" alt="" className="h-7 w-7" />
           <span className="font-display text-lg font-bold text-white">GoalReal</span>
         </Link>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
           <span className="chip border-flame-500/30 bg-flame-500/10 text-flame-400">🔥 {streak}</span>
           <Link href={`/profile/${username}`}>
             <Avatar name={name} hue={hue} size={32} />
           </Link>
+          <form action={logoutAction} className="inline-flex">
+            <button className="rounded-lg bg-white/[0.04] px-2 py-1 text-[11px] font-medium text-ink-300 border border-white/[0.06] hover:bg-white/[0.08] hover:text-white active:scale-95 transition-all">
+              Sign out
+            </button>
+          </form>
         </div>
       </header>
 
